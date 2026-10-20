@@ -25,6 +25,7 @@ public:
     JPH::Vec3 GetPosition(JPH::BodyID bodyId);
     JPH::Vec3 GetLinearVelocity(JPH::BodyID bodyId);
     void SetLinearVelocity(JPH::BodyID bodyId, const JPH::Vec3 &velocity);
+    void ActivateBody(JPH::BodyID bodyId);
 
     // Simulate at a fixed frequency while safely limiting catch-up work after a hitch.
     void Step(float frameDeltaSeconds);

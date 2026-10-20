@@ -44,7 +44,7 @@ constexpr enet_uint8 kJoinHandshakeMessage = 0x01;
 constexpr enet_uint8 kClientPositionMessage = 0x02;
 constexpr enet_uint8 kJoinAcceptedMessage = 0x81;
 constexpr enet_uint8 kWorldSnapshotMessage = 0x82;
-constexpr enet_uint8 kProtocolVersion = 2;
+constexpr enet_uint8 kProtocolVersion = 3;
 constexpr std::size_t kMaxUserIdBytes = 256;
 constexpr std::size_t kMaxDisplayNameBytes = 64;
 constexpr std::size_t kMaxSnapshotPlayers = 128;
@@ -57,6 +57,12 @@ void AppendU16(std::vector<enet_uint8> &buffer, std::size_t value) {
 
 std::uint16_t ReadU16(const enet_uint8 *data) {
     return static_cast<std::uint16_t>((static_cast<std::uint16_t>(data[0]) << 8) | data[1]);
+}
+
+std::uint64_t ReadU64(const enet_uint8 *data) {
+    std::uint64_t value = 0;
+    for (int i = 0; i < 8; ++i) value = (value << 8) | data[i];
+    return value;
 }
 
 float ReadFloat(const enet_uint8 *data) {
@@ -174,10 +180,12 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
     }
 
     if (bytes[0] == kJoinAcceptedMessage) {
-        if (size < 4) return;
-        const std::size_t idLength = ReadU16(bytes + 2);
-        if (idLength == 0 || idLength > kMaxUserIdBytes || size != 4 + idLength) return;
-        userId_.assign(reinterpret_cast<const char *>(bytes + 4), idLength);
+        if (size < 12) return;
+        sessionId_ = ReadU64(bytes + 2);
+        const std::size_t idLength = ReadU16(bytes + 10);
+        if (sessionId_ == 0 || idLength == 0 || idLength > kMaxUserIdBytes ||
+            size != 12 + idLength) return;
+        userId_.assign(reinterpret_cast<const char *>(bytes + 12), idLength);
         authenticated_ = true;
         TraceLog(LOG_INFO, "Handshake autenticato per il player %s.", userId_.c_str());
         return;
@@ -194,14 +202,16 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
     nextPlayers.reserve(count);
     std::size_t offset = 4;
     for (std::size_t index = 0; index < count; ++index) {
-        if (size - offset < 4) return;
-        const std::size_t idLength = ReadU16(bytes + offset);
-        const std::size_t nameLength = ReadU16(bytes + offset + 2);
-        offset += 4;
-        if (idLength == 0 || idLength > kMaxUserIdBytes || nameLength == 0 ||
+        if (size - offset < 12) return;
+        const std::uint64_t sessionId = ReadU64(bytes + offset);
+        const std::size_t idLength = ReadU16(bytes + offset + 8);
+        const std::size_t nameLength = ReadU16(bytes + offset + 10);
+        offset += 12;
+        if (sessionId == 0 || idLength == 0 || idLength > kMaxUserIdBytes || nameLength == 0 ||
             nameLength > kMaxDisplayNameBytes || size - offset < idLength + nameLength + 12) return;
 
         NetworkPlayerSnapshot player;
+        player.sessionId = sessionId;
         player.userId.assign(reinterpret_cast<const char *>(bytes + offset), idLength);
         offset += idLength;
         player.displayName.assign(reinterpret_cast<const char *>(bytes + offset), nameLength);
@@ -277,6 +287,7 @@ void NetworkClient::Shutdown() noexcept {
     }
     session_ = nullptr;
     userId_.clear();
+    sessionId_ = 0;
     players_.clear();
     authenticated_ = false;
     if (enetInitialized_) {

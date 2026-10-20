@@ -22,8 +22,10 @@ public:
     }
     bool HasWorldId() const noexcept { return !worldId_.empty(); }
     const std::string &WorldId() const noexcept { return worldId_; }
+    const std::string &DisplayName() const noexcept { return displayName_; }
 
 private:
     std::vector<char> token_;
     std::string worldId_;
+    std::string displayName_;
 };

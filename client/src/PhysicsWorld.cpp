@@ -144,6 +144,10 @@ void PhysicsWorld::SetLinearVelocity(JPH::BodyID bodyId, const JPH::Vec3 &veloci
     physicsSystem_->GetBodyInterface().SetLinearVelocity(bodyId, velocity);
 }
 
+void PhysicsWorld::ActivateBody(JPH::BodyID bodyId) {
+    physicsSystem_->GetBodyInterface().ActivateBody(bodyId);
+}
+
 void PhysicsWorld::Step(float frameDeltaSeconds) {
     const float clampedFrameTime = std::clamp(frameDeltaSeconds, 0.0f, 0.1f);
     accumulatedTime_ = std::min(accumulatedTime_ + clampedFrameTime,

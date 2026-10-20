@@ -3,6 +3,7 @@
 #include "ClientSession.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,7 @@ struct _ENetHost;
 struct _ENetPeer;
 
 struct NetworkPlayerSnapshot {
+    std::uint64_t sessionId = 0;
     std::string userId;
     std::string displayName;
     float x = 0.0f;
@@ -35,6 +37,7 @@ public:
 
     const std::vector<NetworkPlayerSnapshot> &Players() const noexcept { return players_; }
     const std::string &UserId() const noexcept { return userId_; }
+    std::uint64_t SessionId() const noexcept { return sessionId_; }
 
 private:
     bool SendJoinHandshake();
@@ -45,6 +48,7 @@ private:
     _ENetPeer *peer_ = nullptr;
     const ClientSession *session_ = nullptr;
     std::string userId_;
+    std::uint64_t sessionId_ = 0;
     std::vector<NetworkPlayerSnapshot> players_;
     double nextPositionSendTime_ = 0.0;
     bool authenticated_ = false;

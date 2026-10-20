@@ -9,6 +9,9 @@ namespace {
 
 constexpr float kMoveSpeed = 7.0f;
 constexpr float kHorizontalAcceleration = 20.0f;
+constexpr float kJumpBufferDuration = 0.18f;
+constexpr float kCoyoteDuration = 0.12f;
+constexpr float kGroundTolerance = 0.24f;
 
 } // namespace
 
@@ -42,14 +45,27 @@ void Player::Update(float deltaSeconds, float cameraYaw) {
     const float blend = std::min(1.0f, kHorizontalAcceleration * std::max(0.0f, deltaSeconds));
     const float velocityX = currentVelocity.GetX() + (targetX - currentVelocity.GetX()) * blend;
     const float velocityZ = currentVelocity.GetZ() + (targetZ - currentVelocity.GetZ()) * blend;
-    // The floor's top is y=0, so the capsule center is grounded at its half-height.
-    // Require downward/near-zero vertical velocity to prevent air-jumps.
+    // Buffer a short Space press and allow a brief coyote window so input still
+    // registers if the key event lands between physics steps or just after takeoff.
+    if (IsKeyPressed(KEY_SPACE)) jumpBufferSeconds_ = kJumpBufferDuration;
+    else jumpBufferSeconds_ = std::max(0.0f, jumpBufferSeconds_ - deltaSeconds);
+
+    // The floor's top is y=0, so the capsule center rests near its total half-height.
+    // Give Jolt's contact solver a little room for settling and small floor contacts.
     const JPH::Vec3 currentPosition = physicsWorld_.GetPosition(bodyId_);
     const float capsuleHalfHeight = kHalfHeightOfCylinder + kRadius;
     float velocityY = currentVelocity.GetY();
-    const bool grounded = velocityY <= 0.5f &&
-        currentPosition.GetY() <= capsuleHalfHeight + 0.08f;
-    if (grounded && IsKeyPressed(KEY_SPACE)) velocityY = kJumpSpeed;
+    const bool grounded = velocityY <= 1.0f &&
+        currentPosition.GetY() <= capsuleHalfHeight + kGroundTolerance;
+    if (grounded) coyoteSeconds_ = kCoyoteDuration;
+    else coyoteSeconds_ = std::max(0.0f, coyoteSeconds_ - deltaSeconds);
+
+    if (jumpBufferSeconds_ > 0.0f && coyoteSeconds_ > 0.0f) {
+        velocityY = kJumpSpeed;
+        jumpBufferSeconds_ = 0.0f;
+        coyoteSeconds_ = 0.0f;
+        physicsWorld_.ActivateBody(bodyId_);
+    }
 
     // Preserve Jolt's vertical velocity except when starting a grounded jump.
     physicsWorld_.SetLinearVelocity(bodyId_, JPH::Vec3(velocityX, velocityY, velocityZ));

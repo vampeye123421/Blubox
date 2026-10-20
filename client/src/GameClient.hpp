@@ -9,6 +9,8 @@
 #include <raylib.h>
 
 #include <memory>
+#include <string>
+#include <unordered_map>
 
 class GameClient {
 public:
@@ -34,6 +36,7 @@ private:
     TextureCubemap skyboxCubemap_{};
     Texture2D sunTexture_{};
     Font uiFont_{};
+    std::unordered_map<std::string, Texture2D> nameplateTextures_;
     int sunToLightLocation_ = -1;
     int viewPositionLocation_ = -1;
     int skyboxEnvironmentLocation_ = -1;

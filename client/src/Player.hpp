@@ -17,4 +17,6 @@ public:
 private:
     PhysicsWorld &physicsWorld_;
     JPH::BodyID bodyId_;
+    float jumpBufferSeconds_ = 0.0f;
+    float coyoteSeconds_ = 0.0f;
 };

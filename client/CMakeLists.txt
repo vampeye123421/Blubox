@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.1.6 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.1.7 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -81,7 +81,7 @@ target_include_directories(blubox_client PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     ${enet_SOURCE_DIR}/include
 )
-target_link_libraries(blubox_client PRIVATE raylib Jolt enet)
+target_link_libraries(blubox_client PRIVATE raylib Jolt enet nlohmann_json::nlohmann_json)
 
 if(MSVC)
     target_compile_options(blubox_client PRIVATE /W4 /permissive-)

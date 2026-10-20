@@ -24,9 +24,11 @@ constexpr float kMaximumCameraPitch = 0.85f;
 constexpr float kGroundHalfExtent = 50.0f;
 constexpr float kGroundThickness = 1.0f;
 constexpr int kSkyFaceSize = 160;
-// Point the sun into the camera's initial forward hemisphere so the textured
-// billboard is visible when the scene first opens.
-constexpr Vector3 kSunToLight{ -0.36f, 0.74f, -0.56f };
+// Keep direct light on the player's camera-facing side so character shading is
+// visible from the normal third-person view. The artwork sun remains in front
+// of the camera, independent from this lighting direction.
+constexpr Vector3 kSunToLight{ -0.36f, 0.74f, 0.56f };
+constexpr Vector3 kVisibleSunDirection{ -0.36f, 0.74f, -0.56f };
 constexpr Color kHudColor{ 232, 241, 250, 220 };
 
 struct NoisePoint {
@@ -74,7 +76,7 @@ void main() {
     float specular = (diffuse > 0.0)
         ? pow(max(dot(N, H), 0.0), 48.0) * 0.10
         : 0.0;
-    vec3 lighting = vec3(ambientStrength) + vec3(0.90 * diffuse);
+    vec3 lighting = vec3(ambientStrength) + vec3(1.15 * diffuse);
     vec3 litColor = fragColor.rgb * lighting + vec3(specular);
     finalColor = vec4(litColor, fragColor.a);
 }
@@ -251,18 +253,16 @@ Vector3 NormalizeVector(Vector3 value) {
     return Vector3{ value.x / length, value.y / length, value.z / length };
 }
 
-Color PlayerColor(std::string_view userId) {
-    // Stable FNV-1a hash makes a player's color consistent across clients.
+Color PlayerColor(std::string_view userId, std::uint64_t sessionId = 0) {
+    // Stable FNV-1a hash makes each connection's color consistent across clients.
     std::uint32_t hash = 2166136261u;
     for (const unsigned char ch : userId) hash = (hash ^ ch) * 16777619u;
+    for (int shift = 56; shift >= 0; shift -= 8) {
+        hash = (hash ^ static_cast<unsigned char>((sessionId >> shift) & 0xffu)) * 16777619u;
+    }
     const float hue = static_cast<float>(hash % 360u);
     return ColorFromHSV(hue, 0.72f, 0.94f);
 }
-
-struct Nameplate {
-    std::string name;
-    Vector2 screenPosition{};
-};
 
 } // namespace
 
@@ -297,7 +297,7 @@ int GameClient::Run() {
         sunToLightLocation_ = GetShaderLocation(lightingShader_, "sunToLight");
         viewPositionLocation_ = GetShaderLocation(lightingShader_, "viewPosition");
         const int ambientLocation = GetShaderLocation(lightingShader_, "ambientStrength");
-        const float ambient = 0.24f;
+        const float ambient = 0.18f;
         if (sunToLightLocation_ < 0 || viewPositionLocation_ < 0 || ambientLocation < 0 ||
             lightingShader_.locs[SHADER_LOC_MATRIX_MODEL] < 0 ||
             lightingShader_.locs[SHADER_LOC_MATRIX_NORMAL] < 0 ||
@@ -412,6 +412,11 @@ int GameClient::Run() {
 
     EnableCursor();
     if (customFontLoaded_) UnloadFont(uiFont_);
+    for (const auto &[name, texture] : nameplateTextures_) {
+        (void)name;
+        if (texture.id != 0) UnloadTexture(texture);
+    }
+    nameplateTextures_.clear();
     if (characterCylinderModel_.meshCount > 0) UnloadModel(characterCylinderModel_);
     if (characterSphereModel_.meshCount > 0) UnloadModel(characterSphereModel_);
     if (sunTexture_.id != 0) UnloadTexture(sunTexture_);
@@ -469,10 +474,22 @@ void GameClient::UpdateCamera() {
 
 void GameClient::DrawFrame() {
     const Vector3 playerPosition = ToRaylibVector(player_->Position());
-    std::string localDisplayName = "Guest";
+    std::string localDisplayName = session_.HasToken() ? session_.DisplayName() : "Guest";
     const std::string &localUserId = networkClient_.UserId();
-    std::vector<Nameplate> nameplates;
-    nameplates.reserve(networkClient_.Players().size());
+    for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
+        if (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId() &&
+            !remote.displayName.empty()) {
+            localDisplayName = remote.displayName;
+            break;
+        }
+    }
+
+    Font fallbackFont{};
+    const Font *font = &uiFont_;
+    if (!customFontLoaded_) {
+        GetFontDefaultSafe(&fallbackFont);
+        font = &fallbackFont;
+    }
 
     BeginDrawing();
     ClearBackground(Color{ 120, 174, 213, 255 });
@@ -492,9 +509,9 @@ void GameClient::DrawFrame() {
 
     if (sunTexture_.id != 0) {
         const Vector3 sunPosition{
-            camera_.position.x + kSunToLight.x * 500.0f,
-            camera_.position.y + kSunToLight.y * 500.0f,
-            camera_.position.z + kSunToLight.z * 500.0f
+            camera_.position.x + kVisibleSunDirection.x * 500.0f,
+            camera_.position.y + kVisibleSunDirection.y * 500.0f,
+            camera_.position.z + kVisibleSunDirection.z * 500.0f
         };
         DrawBillboardSafe(&camera_, sunTexture_, sunPosition, 28.0f, WHITE);
     }
@@ -513,7 +530,7 @@ void GameClient::DrawFrame() {
                       kGroundHalfExtent * 2.0f}, Color{126, 164, 139, 255});
 
     const std::string_view localColorId = localUserId.empty() ? "guest" : localUserId;
-    const Color characterTint = PlayerColor(localColorId);
+    const Color characterTint = PlayerColor(localColorId, networkClient_.SessionId());
     if (characterModelsReady_) {
         DrawLitCharacter(&characterCylinderModel_, &characterSphereModel_, playerPosition,
                          Player::kHalfHeightOfCylinder, characterTint);
@@ -530,18 +547,37 @@ void GameClient::DrawFrame() {
     const Vector3 localNamePosition{playerPosition.x,
         playerPosition.y + Player::kHalfHeightOfCylinder + Player::kRadius + 0.18f,
         playerPosition.z};
-    nameplates.push_back(Nameplate{localDisplayName,
-                                   GetWorldToScreen(localNamePosition, camera_)});
+    const auto drawNameplate = [this, font](const std::string &name, Vector3 position) {
+        if (name.empty()) return;
+        auto textureIt = nameplateTextures_.find(name);
+        if (textureIt == nameplateTextures_.end()) {
+            Texture2D texture = CreateNameplateTextureSafe(font, name.c_str());
+            textureIt = nameplateTextures_.emplace(name, texture).first;
+        }
+        const Texture2D texture = textureIt->second;
+        if (texture.id == 0 || texture.height <= 0) return;
+
+        // Each label is a texture billboard positioned in world space, so it
+        // stays above its player and faces the active 3D camera.
+        constexpr float labelHeight = 0.42f;
+        const float labelWidth = labelHeight * static_cast<float>(texture.width) /
+                                 static_cast<float>(texture.height);
+        const Rectangle source{0.0f, 0.0f, static_cast<float>(texture.width),
+                               static_cast<float>(texture.height)};
+        DrawBillboardProSafe(&camera_, texture, source, position,
+                             Vector3{0.0f, 1.0f, 0.0f},
+                             Vector2{labelWidth, labelHeight},
+                             Vector2{labelWidth * 0.5f, labelHeight * 0.5f}, 0.0f, WHITE);
+    };
+    drawNameplate(localDisplayName, localNamePosition);
 
     for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
-        if (!localUserId.empty() && remote.userId == localUserId) {
-            localDisplayName = remote.displayName;
-            nameplates.front().name = localDisplayName;
+        if (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId()) {
             continue;
         }
 
         const Vector3 remotePosition{remote.x, remote.y, remote.z};
-        const Color remoteTint = PlayerColor(remote.userId);
+        const Color remoteTint = PlayerColor(remote.userId, remote.sessionId);
         if (characterModelsReady_) {
             DrawLitCharacter(&characterCylinderModel_, &characterSphereModel_, remotePosition,
                              Player::kHalfHeightOfCylinder, remoteTint);
@@ -556,8 +592,7 @@ void GameClient::DrawFrame() {
         const Vector3 labelPosition{remote.x,
             remote.y + Player::kHalfHeightOfCylinder + Player::kRadius + 0.18f,
             remote.z};
-        nameplates.push_back(Nameplate{remote.displayName,
-                                       GetWorldToScreen(labelPosition, camera_)});
+        drawNameplate(remote.displayName, labelPosition);
     }
 
     if (lightingShader_.id != 0) EndShaderMode();
@@ -566,29 +601,6 @@ void GameClient::DrawFrame() {
 
     // Keep the HUD intentionally quiet: one small FPS number in the top-right.
     const char *fpsText = TextFormat("%d", GetFPS());
-    Font fallbackFont{};
-    const Font *font = &uiFont_;
-    if (!customFontLoaded_) {
-        GetFontDefaultSafe(&fallbackFont);
-        font = &fallbackFont;
-    }
-    constexpr float nameFontSize = 16.0f;
-    constexpr float nameSpacing = 0.5f;
-    for (const Nameplate &nameplate : nameplates) {
-        if (nameplate.name.empty() || nameplate.screenPosition.x < -120.0f ||
-            nameplate.screenPosition.x > static_cast<float>(GetScreenWidth()) + 120.0f ||
-            nameplate.screenPosition.y < -80.0f ||
-            nameplate.screenPosition.y > static_cast<float>(GetScreenHeight()) + 40.0f) continue;
-        const Vector2 textSize = MeasureTextExSafe(font, nameplate.name.c_str(),
-                                                  nameFontSize, nameSpacing);
-        const Vector2 drawPosition{nameplate.screenPosition.x - textSize.x * 0.5f,
-                                   nameplate.screenPosition.y - textSize.y * 0.5f};
-        DrawTextExSafe(font, nameplate.name.c_str(),
-                       Vector2{drawPosition.x + 1.0f, drawPosition.y + 1.0f},
-                       nameFontSize, nameSpacing, Color{16, 27, 39, 190});
-        DrawTextExSafe(font, nameplate.name.c_str(), drawPosition, nameFontSize,
-                       nameSpacing, Color{248, 251, 255, 245});
-    }
     constexpr float hudFontSize = 18.0f;
     constexpr float hudSpacing = 0.5f;
     const Vector2 fpsSize = MeasureTextExSafe(font, fpsText, hudFontSize, hudSpacing);

@@ -11,6 +11,14 @@ void DrawBillboardSafe(const Camera3D *camera, Texture2D texture, Vector3 positi
     if (camera != nullptr) DrawBillboard(*camera, texture, position, scale, tint);
 }
 
+void DrawBillboardProSafe(const Camera3D *camera, Texture2D texture, Rectangle source,
+                          Vector3 position, Vector3 up, Vector2 size, Vector2 origin,
+                          float rotation, Color tint) {
+    if (camera != nullptr) {
+        DrawBillboardPro(*camera, texture, source, position, up, size, origin, rotation, tint);
+    }
+}
+
 void CreateCubeModelSafe(Model *model, float width, float height, float length) {
     if (model == nullptr) return;
     *model = LoadModelFromMesh(GenMeshCube(width, height, length));
@@ -56,4 +64,27 @@ void DrawTextExSafe(const Font *font, const char *text, Vector2 position, float 
     if (font != nullptr && text != nullptr) {
         DrawTextEx(*font, text, position, fontSize, spacing, tint);
     }
+}
+
+Texture2D CreateNameplateTextureSafe(const Font *font, const char *text) {
+    if (font == nullptr || text == nullptr || text[0] == '\0') return Texture2D{};
+    constexpr float fontSize = 40.0f;
+    constexpr float spacing = 1.0f;
+    constexpr int paddingX = 18;
+    constexpr int paddingY = 12;
+    const Vector2 measured = MeasureTextEx(*font, text, fontSize, spacing);
+    const int width = static_cast<int>(measured.x) + paddingX * 2;
+    const int height = static_cast<int>(measured.y) + paddingY * 2;
+    Image image = GenImageColor(width, height, BLANK);
+    if (image.data == nullptr) return Texture2D{};
+    ImageDrawTextEx(&image, *font, text, Vector2{static_cast<float>(paddingX + 1),
+                                                 static_cast<float>(paddingY + 2)},
+                    fontSize, spacing, Color{12, 22, 34, 190});
+    ImageDrawTextEx(&image, *font, text, Vector2{static_cast<float>(paddingX),
+                                                 static_cast<float>(paddingY)},
+                    fontSize, spacing, Color{250, 253, 255, 255});
+    Texture2D texture = LoadTextureFromImage(image);
+    UnloadImage(image);
+    if (texture.id != 0) SetTextureFilter(texture, TEXTURE_FILTER_BILINEAR);
+    return texture;
 }
