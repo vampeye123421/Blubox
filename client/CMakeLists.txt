@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.1.7 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.1.8 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -106,14 +106,48 @@ if(WIN32 AND MINGW)
 endif()
 
 # The bootstrapper only links Raylib; it does not load Jolt or the game scene.
+set(BLUBOX_LAUNCHER_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/launcher-generated")
+set(BLUBOX_LAUNCHER_FONT_HEADER "${BLUBOX_LAUNCHER_GENERATED_DIR}/BluboxLauncherFont.hpp")
+set(BLUBOX_LAUNCHER_ICON_HEADER "${BLUBOX_LAUNCHER_GENERATED_DIR}/BluboxLauncherIcon.hpp")
+add_custom_command(
+    OUTPUT "${BLUBOX_LAUNCHER_FONT_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${BLUBOX_LAUNCHER_GENERATED_DIR}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/Lato-Regular.ttf"
+            "-DOUTPUT_FILE=${BLUBOX_LAUNCHER_FONT_HEADER}"
+            "-DSYMBOL_NAME=kLauncherFontData"
+            "-DSIZE_SYMBOL_NAME=kLauncherFontDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/Lato-Regular.ttf"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT "${BLUBOX_LAUNCHER_ICON_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${BLUBOX_LAUNCHER_GENERATED_DIR}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/bloxity-icon.png"
+            "-DOUTPUT_FILE=${BLUBOX_LAUNCHER_ICON_HEADER}"
+            "-DSYMBOL_NAME=kLauncherIconData"
+            "-DSIZE_SYMBOL_NAME=kLauncherIconDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/bloxity-icon.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+
 add_executable(blubox_launcher
     src/LauncherMain.cpp
     src/Launcher.cpp
     src/LaunchOptions.cpp
     src/ProtocolLaunchData.cpp
     src/WindowsProtocolRegistration.cpp
+    "${BLUBOX_LAUNCHER_FONT_HEADER}"
+    "${BLUBOX_LAUNCHER_ICON_HEADER}"
 )
-target_include_directories(blubox_launcher PRIVATE src)
+target_include_directories(blubox_launcher PRIVATE src "${BLUBOX_LAUNCHER_GENERATED_DIR}")
 target_link_libraries(blubox_launcher PRIVATE raylib nlohmann_json::nlohmann_json)
 if(MSVC)
     target_compile_options(blubox_launcher PRIVATE /W4 /permissive-)

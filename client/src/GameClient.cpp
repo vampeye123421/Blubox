@@ -544,6 +544,10 @@ void GameClient::DrawFrame() {
         DrawCapsule(capsuleBottom, capsuleTop, Player::kRadius, 20, 12, characterTint);
     }
 
+    // Nameplates are textured billboards. Switch back to Raylib's default
+    // texture shader after the lit world geometry so their glyph texture is sampled.
+    if (lightingShader_.id != 0) EndShaderMode();
+
     const Vector3 localNamePosition{playerPosition.x,
         playerPosition.y + Player::kHalfHeightOfCylinder + Player::kRadius + 0.18f,
         playerPosition.z};
@@ -559,7 +563,7 @@ void GameClient::DrawFrame() {
 
         // Each label is a texture billboard positioned in world space, so it
         // stays above its player and faces the active 3D camera.
-        constexpr float labelHeight = 0.42f;
+        constexpr float labelHeight = 0.56f;
         const float labelWidth = labelHeight * static_cast<float>(texture.width) /
                                  static_cast<float>(texture.height);
         const Rectangle source{0.0f, 0.0f, static_cast<float>(texture.width),
@@ -594,8 +598,6 @@ void GameClient::DrawFrame() {
             remote.z};
         drawNameplate(remote.displayName, labelPosition);
     }
-
-    if (lightingShader_.id != 0) EndShaderMode();
 
     EndMode3D();
 

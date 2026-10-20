@@ -1,5 +1,6 @@
 #include "RaylibCompat.hpp"
 
+#include <initializer_list>
 #include <raylib.h>
 
 void BeginMode3DSafe(const Camera3D *camera) {
@@ -68,18 +69,27 @@ void DrawTextExSafe(const Font *font, const char *text, Vector2 position, float 
 
 Texture2D CreateNameplateTextureSafe(const Font *font, const char *text) {
     if (font == nullptr || text == nullptr || text[0] == '\0') return Texture2D{};
-    constexpr float fontSize = 40.0f;
+    constexpr float fontSize = 54.0f;
     constexpr float spacing = 1.0f;
-    constexpr int paddingX = 18;
-    constexpr int paddingY = 12;
+    constexpr int paddingX = 16;
+    constexpr int paddingY = 10;
     const Vector2 measured = MeasureTextEx(*font, text, fontSize, spacing);
     const int width = static_cast<int>(measured.x) + paddingX * 2;
     const int height = static_cast<int>(measured.y) + paddingY * 2;
     Image image = GenImageColor(width, height, BLANK);
     if (image.data == nullptr) return Texture2D{};
-    ImageDrawTextEx(&image, *font, text, Vector2{static_cast<float>(paddingX + 1),
-                                                 static_cast<float>(paddingY + 2)},
-                    fontSize, spacing, Color{12, 22, 34, 190});
+    // A compact dark outline keeps the white name legible against both sky
+    // and terrain when the billboard is viewed from different camera angles.
+    constexpr Color outline{16, 30, 42, 245};
+    for (const Vector2 offset : {Vector2{-2.0f, 0.0f}, Vector2{2.0f, 0.0f},
+                                 Vector2{0.0f, -2.0f}, Vector2{0.0f, 2.0f},
+                                 Vector2{-1.5f, -1.5f}, Vector2{1.5f, -1.5f},
+                                 Vector2{-1.5f, 1.5f}, Vector2{1.5f, 1.5f}}) {
+        ImageDrawTextEx(&image, *font, text,
+                        Vector2{static_cast<float>(paddingX) + offset.x,
+                                static_cast<float>(paddingY) + offset.y},
+                        fontSize, spacing, outline);
+    }
     ImageDrawTextEx(&image, *font, text, Vector2{static_cast<float>(paddingX),
                                                  static_cast<float>(paddingY)},
                     fontSize, spacing, Color{250, 253, 255, 255});

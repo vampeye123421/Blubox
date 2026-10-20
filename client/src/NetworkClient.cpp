@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <bit>
 #include <cmath>
+#include <chrono>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -281,6 +282,21 @@ bool NetworkClient::SendJoinHandshake() {
 
 void NetworkClient::Shutdown() noexcept {
     if (host_ != nullptr) {
+        if (peer_ != nullptr && peer_->state == ENET_PEER_STATE_CONNECTED) {
+            enet_peer_disconnect(peer_, 0);
+            enet_host_flush(host_);
+
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(350);
+            ENetEvent event{};
+            while (std::chrono::steady_clock::now() < deadline) {
+                const int result = enet_host_service(host_, &event, 10);
+                if (result > 0 && event.type == ENET_EVENT_TYPE_DISCONNECT) break;
+                if (result > 0 && event.type == ENET_EVENT_TYPE_RECEIVE) {
+                    enet_packet_destroy(event.packet);
+                }
+                if (result < 0) break;
+            }
+        }
         enet_host_destroy(host_);
         host_ = nullptr;
         peer_ = nullptr;

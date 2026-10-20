@@ -1,4 +1,6 @@
 #include "Launcher.hpp"
+#include "BluboxLauncherFont.hpp"
+#include "BluboxLauncherIcon.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,9 +12,11 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -59,7 +63,19 @@ struct UpdateManifest {
     std::string sha256;
 };
 
-void DrawProgress(float progress, std::string_view status);
+struct SplashState {
+    Font font{};
+    Texture2D icon{};
+    std::chrono::steady_clock::time_point transferStarted{};
+    bool ownsFont = false;
+    bool dragging = false;
+    bool cancelRequested = false;
+};
+
+SplashState g_splash;
+
+void DrawProgress(float progress, std::string_view status, std::uint64_t totalBytes = 0,
+                  std::uint64_t transferredBytes = 0, double bytesPerSecond = 0.0);
 
 #ifdef _WIN32
 struct WinHttpHandle {
@@ -184,19 +200,22 @@ std::string ReadHttpsText(std::string_view url) {
 void DownloadHttpsFile(std::string_view url, const fs::path &destination) {
     std::ofstream output(destination, std::ios::binary | std::ios::trunc);
     if (!output) throw std::runtime_error("Impossibile creare il file temporaneo del client.");
-    auto nextProgressDraw = std::chrono::steady_clock::now();
+    g_splash.transferStarted = std::chrono::steady_clock::now();
+    auto nextProgressDraw = g_splash.transferStarted;
     TransferHttps(CrackHttpsUrl(url), [&output, &nextProgressDraw](const char *data, size_t count,
                                                                    ULONGLONG total, ULONGLONG received) {
         output.write(data, static_cast<std::streamsize>(count));
         if (!output) throw std::runtime_error("Errore durante il salvataggio del client scaricato.");
-        const float progress = total > 0 ? std::min(1.0f, static_cast<float>(received) /
-                                                        static_cast<float>(total)) : 0.0f;
         const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now - g_splash.transferStarted).count();
+        const double bytesPerSecond = elapsed > 0.0 ? static_cast<double>(received) / elapsed : 0.0;
         if (now >= nextProgressDraw || (total > 0 && received >= total)) {
-            DrawProgress(progress, "Downloading update...");
+            const float progress = total > 0
+                ? std::min(1.0f, static_cast<float>(received) / static_cast<float>(total))
+                : -1.0f;
+            DrawProgress(progress, "Downloading update...", total, received, bytesPerSecond);
             nextProgressDraw = now + std::chrono::milliseconds(100);
         }
-        if (WindowShouldClose()) throw std::runtime_error("Aggiornamento annullato.");
     });
     output.close();
     if (!output) throw std::runtime_error("Errore durante la chiusura del client scaricato.");
@@ -358,20 +377,183 @@ bool IsNewer(std::string_view candidate, std::string_view installed) {
     return candidate != installed;
 }
 
-void DrawProgress(float progress, std::string_view status) {
-    constexpr int width = 520;
-    const int left = (GetScreenWidth() - width) / 2;
+std::string FormatBytes(double bytes) {
+    constexpr const char *units[] = {"B", "KB", "MB", "GB", "TB"};
+    std::size_t unit = 0;
+    while (bytes >= 1024.0 && unit + 1 < std::size(units)) {
+        bytes /= 1024.0;
+        ++unit;
+    }
+    std::ostringstream output;
+    output << std::fixed << std::setprecision(unit == 0 ? 0 : 2) << bytes << ' ' << units[unit];
+    return output.str();
+}
+
+std::string FormatRemainingTime(double seconds) {
+    if (seconds <= 0.0) return "Almost done";
+    if (seconds < 1.0) return "Less than a second remaining";
+    const auto wholeSeconds = static_cast<unsigned int>(seconds);
+    const unsigned int minutes = wholeSeconds / 60;
+    const unsigned int remainingSeconds = wholeSeconds % 60;
+    std::ostringstream output;
+    output << "About ";
+    if (minutes > 0) output << minutes << "m ";
+    output << remainingSeconds << "s remaining";
+    return output.str();
+}
+
+void InitializeSplashWindow() {
+    g_splash = SplashState{};
+    g_splash.font = LoadFontFromMemory(".ttf", blubox::kLauncherFontData,
+                                       blubox::kLauncherFontDataSize, 48, nullptr, 0);
+    g_splash.ownsFont = g_splash.font.texture.id != 0;
+    if (!g_splash.ownsFont) g_splash.font = GetFontDefault();
+    else SetTextureFilter(g_splash.font.texture, TEXTURE_FILTER_BILINEAR);
+
+    Image iconImage = LoadImageFromMemory(".png", blubox::kLauncherIconData,
+                                          blubox::kLauncherIconDataSize);
+    if (iconImage.data != nullptr) {
+        g_splash.icon = LoadTextureFromImage(iconImage);
+        UnloadImage(iconImage);
+        if (g_splash.icon.id != 0) SetTextureFilter(g_splash.icon, TEXTURE_FILTER_BILINEAR);
+    }
+    g_splash.transferStarted = std::chrono::steady_clock::now();
+    SetExitKey(KEY_NULL);
+}
+
+void CloseSplashWindow() {
+    if (g_splash.icon.id != 0) UnloadTexture(g_splash.icon);
+    if (g_splash.ownsFont) UnloadFont(g_splash.font);
+    if (IsWindowReady()) CloseWindow();
+    g_splash = SplashState{};
+}
+
+void DrawCenteredSplashText(const char *text, float y, float fontSize, Color color) {
+    const Vector2 size = MeasureTextEx(g_splash.font, text, fontSize, 0.5f);
+    DrawTextEx(g_splash.font, text,
+               Vector2{(static_cast<float>(GetScreenWidth()) - size.x) * 0.5f, y},
+               fontSize, 0.5f, color);
+}
+
+void DrawProgress(float progress, std::string_view status, std::uint64_t totalBytes,
+                  std::uint64_t transferredBytes, double bytesPerSecond) {
+    constexpr Color background{247, 250, 250, 255};
+    constexpr Color border{74, 204, 166, 255};
+    constexpr Color ink{65, 83, 101, 255};
+    constexpr Color muted{103, 121, 139, 255};
+    constexpr Color accent{32, 183, 173, 255};
+    constexpr Color track{224, 231, 234, 255};
+
+    const float width = static_cast<float>(GetScreenWidth());
+    const float height = static_cast<float>(GetScreenHeight());
+    const Rectangle frame{12.0f, 12.0f, width - 24.0f, height - 24.0f};
+    const Rectangle closeButton{width - 58.0f, 18.0f, 38.0f, 34.0f};
+    const Rectangle minimizeButton{width - 106.0f, 18.0f, 38.0f, 34.0f};
+    const Rectangle cancelButton{(width - 200.0f) * 0.5f, height - 92.0f, 200.0f, 48.0f};
+
     BeginDrawing();
-    ClearBackground(Color{17, 22, 32, 255});
-    DrawText("BLUBOX", left, GetScreenHeight() / 2 - 94, 28, RAYWHITE);
-    DrawText(TextFormat("%.*s", static_cast<int>(status.size()), status.data()), left,
-             GetScreenHeight() / 2 - 48, 18, Color{184, 196, 214, 255});
-    DrawRectangle(left, GetScreenHeight() / 2, width, 12, Color{48, 58, 76, 255});
-    DrawRectangle(left, GetScreenHeight() / 2, static_cast<int>(width * progress), 12,
-                  Color{80, 166, 255, 255});
-    DrawText(TextFormat("%d%%", static_cast<int>(progress * 100.0f)), left,
-             GetScreenHeight() / 2 + 24, 16, RAYWHITE);
+    ClearBackground(background);
+    DrawRectangleRounded(frame, 0.012f, 12, background);
+    DrawRectangleRoundedLines(frame, 0.012f, 12, border);
+
+    DrawLineEx(Vector2{minimizeButton.x + 10.0f, minimizeButton.y + 17.0f},
+               Vector2{minimizeButton.x + 28.0f, minimizeButton.y + 17.0f}, 2.0f, ink);
+    DrawLineEx(Vector2{closeButton.x + 11.0f, closeButton.y + 8.0f},
+               Vector2{closeButton.x + 27.0f, closeButton.y + 24.0f}, 2.0f, ink);
+    DrawLineEx(Vector2{closeButton.x + 27.0f, closeButton.y + 8.0f},
+               Vector2{closeButton.x + 11.0f, closeButton.y + 24.0f}, 2.0f, ink);
+
+    const float iconSize = std::min(210.0f, height * 0.36f);
+    const float iconY = 48.0f;
+    if (g_splash.icon.id != 0) {
+        const Rectangle source{0.0f, 0.0f, static_cast<float>(g_splash.icon.width),
+                               static_cast<float>(g_splash.icon.height)};
+        const Rectangle destination{(width - iconSize) * 0.5f, iconY, iconSize, iconSize};
+        DrawTexturePro(g_splash.icon, source, destination, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
+    } else {
+        DrawCircle(static_cast<int>(width * 0.5f), static_cast<int>(iconY + iconSize * 0.5f),
+                   iconSize * 0.43f, Color{225, 244, 235, 255});
+        DrawCenteredSplashText("B", iconY + iconSize * 0.16f, iconSize * 0.68f,
+                               Color{71, 111, 174, 255});
+    }
+
+    const std::string heading(status);
+    DrawCenteredSplashText(heading.c_str(), iconY + iconSize + 12.0f, 27.0f, ink);
+
+    const float barWidth = width * 0.70f;
+    const float barHeight = 16.0f;
+    const float barX = (width - barWidth) * 0.5f;
+    const float barY = height * 0.64f;
+    const Rectangle trackRect{barX, barY, barWidth, barHeight};
+    DrawRectangleRounded(trackRect, 0.5f, 12, track);
+    if (progress >= 0.0f) {
+        const float fillWidth = barWidth * std::clamp(progress, 0.0f, 1.0f);
+        if (fillWidth > 0.0f) {
+            DrawRectangleRounded(Rectangle{barX, barY, fillWidth, barHeight}, 0.5f, 12, accent);
+        }
+    } else {
+        const float movingWidth = barWidth * 0.22f;
+        const float phase = static_cast<float>(GetTime() * 0.65);
+        const float travel = barWidth - movingWidth;
+        const float sweep = (1.0f - std::abs(std::fmod(phase, 2.0f) - 1.0f)) * travel;
+        DrawRectangleRounded(Rectangle{barX + sweep, barY, movingWidth, barHeight},
+                             0.5f, 12, accent);
+    }
+
+    std::ostringstream details;
+    if (totalBytes > 0) {
+        const int percentage = static_cast<int>(std::clamp(progress, 0.0f, 1.0f) * 100.0f);
+        details << FormatBytes(static_cast<double>(transferredBytes)) << " / "
+                << FormatBytes(static_cast<double>(totalBytes)) << " (" << percentage << "%)";
+    } else {
+        details << FormatBytes(static_cast<double>(transferredBytes)) << " downloaded";
+    }
+    details << "  |  ";
+    if (bytesPerSecond > 0.0) details << FormatBytes(bytesPerSecond) << "/s";
+    else details << "Calculating speed...";
+    details << "  |  ";
+    if (totalBytes > transferredBytes && bytesPerSecond > 1.0) {
+        details << FormatRemainingTime(static_cast<double>(totalBytes - transferredBytes) / bytesPerSecond);
+    } else if (totalBytes == 0) {
+        details << "Estimating time remaining...";
+    } else {
+        details << "Almost done";
+    }
+    const std::string detailText = details.str();
+    const float detailSize = std::min(17.0f, width / 54.0f);
+    DrawCenteredSplashText(detailText.c_str(), barY + 31.0f, detailSize, muted);
+
+    if (WindowShouldClose()) g_splash.cancelRequested = true;
+    bool minimizeRequested = false;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        const Vector2 mouse = GetMousePosition();
+        if (CheckCollisionPointRec(mouse, cancelButton) || CheckCollisionPointRec(mouse, closeButton)) {
+            g_splash.cancelRequested = true;
+        } else if (CheckCollisionPointRec(mouse, minimizeButton)) {
+            minimizeRequested = true;
+        } else if (mouse.y <= 50.0f) {
+            g_splash.dragging = true;
+        }
+    }
+    if (g_splash.dragging && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        const Vector2 mouseDelta = GetMouseDelta();
+        const Vector2 windowPosition = GetWindowPosition();
+        SetWindowPosition(static_cast<int>(windowPosition.x + mouseDelta.x),
+                          static_cast<int>(windowPosition.y + mouseDelta.y));
+    } else if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        g_splash.dragging = false;
+    }
+
+    DrawRectangleRoundedLines(cancelButton, 0.18f, 12, accent);
+    const char *cancelText = g_splash.cancelRequested ? "Cancelling..." : "Cancel";
+    const Vector2 cancelSize = MeasureTextEx(g_splash.font, cancelText, 19.0f, 0.5f);
+    DrawTextEx(g_splash.font, cancelText,
+               Vector2{cancelButton.x + (cancelButton.width - cancelSize.x) * 0.5f,
+                       cancelButton.y + (cancelButton.height - cancelSize.y) * 0.5f},
+               19.0f, 0.5f, accent);
     EndDrawing();
+    if (minimizeRequested) MinimizeWindow();
+    if (g_splash.cancelRequested) throw std::runtime_error("Aggiornamento annullato.");
 }
 
 void CopyWithProgress(const fs::path &source, const fs::path &destination) {
@@ -381,9 +563,10 @@ void CopyWithProgress(const fs::path &source, const fs::path &destination) {
     if (!output) throw std::runtime_error("Impossibile creare il file temporaneo del client.");
     std::error_code sizeError;
     const auto totalBytes = fs::file_size(source, sizeError);
+    g_splash.transferStarted = std::chrono::steady_clock::now();
+    auto nextProgressDraw = g_splash.transferStarted;
     std::array<char, 256 * 1024> buffer{};
     std::uintmax_t copied = 0;
-    bool windowOpen = false;
     while (input) {
         input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto count = input.gcount();
@@ -392,14 +575,20 @@ void CopyWithProgress(const fs::path &source, const fs::path &destination) {
             if (!output) throw std::runtime_error("Errore durante la copia del client.");
             copied += static_cast<std::uintmax_t>(count);
         }
-        const float progress = !sizeError && totalBytes > 0 ? std::min(1.0f, static_cast<float>(copied) / static_cast<float>(totalBytes)) : 0.0f;
-        DrawProgress(progress, "Downloading update...");
-        windowOpen = true;
-        if (WindowShouldClose()) throw std::runtime_error("Aggiornamento annullato.");
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= nextProgressDraw || (!sizeError && copied >= totalBytes)) {
+            const double elapsed = std::chrono::duration<double>(now - g_splash.transferStarted).count();
+            const double rate = elapsed > 0.0 ? static_cast<double>(copied) / elapsed : 0.0;
+            const float progress = !sizeError && totalBytes > 0
+                ? std::min(1.0f, static_cast<float>(copied) / static_cast<float>(totalBytes))
+                : -1.0f;
+            DrawProgress(progress, "Installing Blubox...", sizeError ? 0 : totalBytes, copied, rate);
+            nextProgressDraw = now + std::chrono::milliseconds(100);
+        }
     }
     output.close();
     if (!input.eof()) throw std::runtime_error("Errore durante la lettura del client locale.");
-    if (windowOpen) DrawProgress(1.0f, "Installing update...");
+    DrawProgress(1.0f, "Starting Blubox...", sizeError ? 0 : totalBytes, copied, 0.0);
 }
 
 #ifdef _WIN32
@@ -512,10 +701,11 @@ int RunLauncher(const LaunchOptions &, int argc, char *argv[]) {
     const bool needsUpdate = !fs::exists(installedClient);
 
     if (needsUpdate) {
-        SetConfigFlags(FLAG_WINDOW_RESIZABLE);
-        InitWindow(680, 320, "Blubox Launcher");
+        SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
+        InitWindow(900, 580, "Blubox Installer");
         if (!IsWindowReady()) throw std::runtime_error("Impossibile inizializzare la finestra di aggiornamento.");
         SetTargetFPS(60);
+        InitializeSplashWindow();
         fs::create_directories(versionDirectory);
         const fs::path stagingClient = versionDirectory / "blubox_client.exe.tmp";
         try {
@@ -534,10 +724,10 @@ int RunLauncher(const LaunchOptions &, int argc, char *argv[]) {
             }
             fs::remove(installedClient);
             fs::rename(stagingClient, installedClient);
-            DrawProgress(1.0f, "Starting Blubox...");
-            CloseWindow();
+            DrawProgress(1.0f, "Starting Blubox...", 0, 0, 0.0);
+            CloseSplashWindow();
         } catch (...) {
-            CloseWindow();
+            CloseSplashWindow();
             throw;
         }
     }
