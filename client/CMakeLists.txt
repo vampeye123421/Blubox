@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.1.9 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -162,11 +162,42 @@ if(WIN32 AND MINGW)
     target_link_options(blubox_launcher PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
 
+# Dedicated updater entry point for the Studio Start Menu shortcut.
+add_executable(blubox_studio_launcher
+    src/LauncherMain.cpp
+    src/Launcher.cpp
+    src/LaunchOptions.cpp
+    src/ProtocolLaunchData.cpp
+    src/WindowsProtocolRegistration.cpp
+    "${BLUBOX_LAUNCHER_FONT_HEADER}"
+    "${BLUBOX_LAUNCHER_ICON_HEADER}"
+)
+target_include_directories(blubox_studio_launcher PRIVATE src "${BLUBOX_LAUNCHER_GENERATED_DIR}")
+target_link_libraries(blubox_studio_launcher PRIVATE raylib nlohmann_json::nlohmann_json)
+target_compile_definitions(blubox_studio_launcher PRIVATE BLUBOX_STUDIO_LAUNCHER=1)
+if(MSVC)
+    target_compile_options(blubox_studio_launcher PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(blubox_studio_launcher PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+if(WIN32)
+    target_compile_definitions(blubox_studio_launcher PRIVATE _WIN32_WINNT=0x0600)
+    target_link_libraries(blubox_studio_launcher PRIVATE winmm advapi32 shell32 ole32 winhttp bcrypt)
+endif()
+if(WIN32 AND MINGW)
+    target_link_options(blubox_studio_launcher PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
+
 # Local mock release manifest and development payload for the bootstrapper.
 configure_file(version.json version.json COPYONLY)
 add_custom_command(TARGET blubox_launcher POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_CURRENT_BINARY_DIR}/version.json $<TARGET_FILE_DIR:blubox_launcher>/version.json
+    VERBATIM
+)
+add_custom_command(TARGET blubox_studio_launcher POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_BINARY_DIR}/version.json $<TARGET_FILE_DIR:blubox_studio_launcher>/version.json
     VERBATIM
 )
 add_dependencies(blubox_launcher blubox_client)

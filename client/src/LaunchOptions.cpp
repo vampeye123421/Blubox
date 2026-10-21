@@ -31,8 +31,6 @@ LaunchOptions ParseLaunchOptions(int argc, char *argv[]) {
             options.showHelp = true;
         } else if (argument == "--fullscreen") {
             options.startFullscreen = true;
-        } else if (argument == "--studio") {
-            options.launchStudio = true;
         } else if (argument == "--register-protocol") {
             options.registerProtocol = true;
         } else if (argument == "--unregister-protocol") {
@@ -67,7 +65,7 @@ LaunchOptions ParseLaunchOptions(int argc, char *argv[]) {
 void PrintUsage(const char *executableName) {
     const char *name = executableName != nullptr ? executableName : "blubox_client";
     // Keep help output simple and portable across terminals.
-    std::printf("Uso: %s [--mode=guest] [--fullscreen] [--studio] [blubox://...] [--help]\n", name);
+    std::printf("Uso: %s [--mode=guest] [--fullscreen] [blubox://...] [--help]\n", name);
     std::printf("     %s --register-protocol | --unregister-protocol\n", name);
     std::printf("La modalita' guest avvia la scena locale di test senza connessione a un server.\n");
     std::printf("Su Windows usa --register-protocol per registrare blubox:// per l'utente corrente.\n");

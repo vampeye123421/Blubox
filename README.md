@@ -4,8 +4,8 @@
 
 `https://raw.githubusercontent.com/vampeye123421/Blubox/main/version.json`
 
-The manifest points to versioned GitHub Release assets and includes SHA-256 digests for the client, Studio executable, and Studio fonts. Run `blubox_launcher.exe --studio` to install or update Studio and launch it. The release workflow publishes binaries first, then updates the matching `version.json`.
+The manifest points to versioned GitHub Release assets and includes SHA-256 digests for the client, both launchers, Studio, and Studio fonts. The client launcher installs or repairs Studio on first run and checks it for updates before launching the game. Studio has a separate updater launcher used by its Start Menu shortcut.
 
-The first `--studio` launch also creates a **Blubox Studio** shortcut in the Windows Start Menu and registers `blubox-studio://` for browser sign-in handoff.
+The client launcher creates a **Blubox Studio** Start Menu shortcut, registers `blubox://` and `blubox-studio://`, and installs versioned launchers under `%LOCALAPPDATA%\Blubox\launchers` so protocol and Start Menu entries can be repaired as launcher releases change.
 
-The release should also include `blubox_launcher.exe`. The launcher is the registered `blubox://` protocol handler; it downloads and verifies the versioned client. Launcher self-updates are not implemented yet and require a separate installer/bootstrap update mechanism.
+Each release includes `blubox_launcher.exe` and `blubox_studio_launcher.exe`. The client launcher is the registered `blubox://` handler and bootstraps both apps; the Studio launcher is used by the Start Menu shortcut and `blubox-studio://` handler. Both are installed by version under `%LOCALAPPDATA%\Blubox\launchers` and repaired from the checksum-protected release manifest.

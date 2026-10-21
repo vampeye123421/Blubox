@@ -28,7 +28,7 @@ Con Visual Studio vengono creati `build/Release/blubox_launcher.exe` e `build/Re
 ./build/Release/blubox_launcher.exe "blubox://place/123"
 ```
 
-Senza argomenti parte la scena locale guest. Il launcher controlla il feed HTTPS in `version.json` pubblicato nel repository Blubox, scarica l'eseguibile client indicato dal manifest e verifica lo SHA-256 prima di installarlo in `%LOCALAPPDATA%\Blubox\versions\<version>\blubox_client.exe`. Usa `blubox_launcher.exe --studio` per installare o aggiornare Blubox Studio; il launcher salva anche un collegamento nel menu Start e registra il protocollo `blubox-studio://` per il login web.
+Il launcher client controlla il feed HTTPS in `version.json`, installa o ripara automaticamente Blubox Studio e i suoi font, poi aggiorna e avvia il client. Studio viene gestito da un launcher separato (`blubox_studio_launcher.exe`) e aperto dal collegamento Blubox Studio nel menu Start. Entrambi i launcher verificano gli SHA-256 pubblicati prima di installare i file.
 
 ## Registrare `blubox://` su Windows
 

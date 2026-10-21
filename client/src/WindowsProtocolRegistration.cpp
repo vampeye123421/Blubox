@@ -66,8 +66,12 @@ std::wstring GetCurrentExecutablePath() {
 #endif
 
 void RegisterBluboxProtocolForCurrentUser() {
+    RegisterBluboxProtocolForCurrentUser(std::filesystem::path(GetCurrentExecutablePath()));
+}
+
+void RegisterBluboxProtocolForCurrentUser(const std::filesystem::path &launcherExecutable) {
 #ifdef _WIN32
-    const std::wstring executablePath = GetCurrentExecutablePath();
+    const std::wstring executablePath = launcherExecutable.wstring();
 
     RegistryKey protocolKey;
     LSTATUS status = RegCreateKeyExW(HKEY_CURRENT_USER, kProtocolRegistryPath, 0, nullptr,
@@ -163,7 +167,7 @@ void CreateBluboxStudioStartMenuShortcut(const std::filesystem::path &launcherEx
                                           IID_PPV_ARGS(&link));
         if (FAILED(result)) throw std::runtime_error("Creazione del collegamento Studio non riuscita.");
         const std::wstring path = launcherExecutable.wstring();
-        if (FAILED(link->SetPath(path.c_str())) || FAILED(link->SetArguments(L"--studio")) ||
+        if (FAILED(link->SetPath(path.c_str())) ||
             FAILED(link->SetWorkingDirectory(launcherExecutable.parent_path().wstring().c_str())) ||
             FAILED(link->SetDescription(L"Install and launch Blubox Studio"))) {
             throw std::runtime_error("Configurazione del collegamento Studio non riuscita.");

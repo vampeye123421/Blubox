@@ -7,7 +7,10 @@
 
 int main(int argc, char *argv[]) {
     try {
-        const LaunchOptions options = ParseLaunchOptions(argc, argv);
+        LaunchOptions options = ParseLaunchOptions(argc, argv);
+#ifdef BLUBOX_STUDIO_LAUNCHER
+        options.launchStudio = true;
+#endif
         if (options.showHelp) {
             PrintUsage(argc > 0 ? argv[0] : nullptr);
             return 0;
