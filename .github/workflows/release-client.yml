@@ -104,7 +104,7 @@ jobs:
             manifest.launcherVersion = version;
             manifest.launcherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/blubox_launcher.exe`;
             manifest.launcherSha256 = process.env.CLIENT_LAUNCHER_SHA256;
-            manifest.studioVersion = '0.1.1';
+            manifest.studioVersion = '0.1.2';
             manifest.studioDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/blubox_studio.exe`;
             manifest.studioSha256 = process.env.STUDIO_SHA256;
             manifest.studioFontUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/InterVariable.ttf`;
