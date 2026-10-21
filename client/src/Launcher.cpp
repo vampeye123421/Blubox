@@ -1,6 +1,6 @@
 #include "Launcher.hpp"
 #include "BluboxLauncherFont.hpp"
-#include "BluboxLauncherIcon.hpp"
+#include "BluboxBrandIcon.hpp"
 #include "WindowsProtocolRegistration.hpp"
 
 #include <algorithm>
@@ -84,6 +84,7 @@ struct SplashState {
     bool ownsFont = false;
     bool dragging = false;
     bool cancelRequested = false;
+    bool darkMode = false;
 };
 
 SplashState g_splash;
@@ -458,9 +459,20 @@ void InitializeSplashWindow() {
     if (!g_splash.ownsFont) g_splash.font = GetFontDefault();
     else SetTextureFilter(g_splash.font.texture, TEXTURE_FILTER_BILINEAR);
 
-    Image iconImage = LoadImageFromMemory(".png", blubox::kLauncherIconData,
-                                          blubox::kLauncherIconDataSize);
+    DWORD lightPreference = 1;
+#ifdef _WIN32
+    DWORD preferenceBytes = sizeof(lightPreference);
+    const LSTATUS themeRead = RegGetValueW(
+        HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &lightPreference, &preferenceBytes);
+    g_splash.darkMode = themeRead == ERROR_SUCCESS && lightPreference == 0;
+#endif
+
+    Image iconImage = LoadImageFromMemory(".png", blubox::kBrandIconData,
+                                          blubox::kBrandIconDataSize);
     if (iconImage.data != nullptr) {
+        ImageFormat(&iconImage, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        SetWindowIcon(iconImage);
         g_splash.icon = LoadTextureFromImage(iconImage);
         UnloadImage(iconImage);
         if (g_splash.icon.id != 0) SetTextureFilter(g_splash.icon, TEXTURE_FILTER_BILINEAR);
@@ -485,19 +497,20 @@ void DrawCenteredSplashText(const char *text, float y, float fontSize, Color col
 
 void DrawProgress(float progress, std::string_view status, std::uint64_t totalBytes,
                   std::uint64_t transferredBytes, double bytesPerSecond) {
-    constexpr Color background{247, 250, 250, 255};
-    constexpr Color border{74, 204, 166, 255};
-    constexpr Color ink{65, 83, 101, 255};
-    constexpr Color muted{103, 121, 139, 255};
-    constexpr Color accent{32, 183, 173, 255};
-    constexpr Color track{224, 231, 234, 255};
+    const Color background = g_splash.darkMode ? Color{19, 19, 26, 255} : Color{248, 249, 250, 255};
+    const Color border = g_splash.darkMode ? Color{46, 46, 62, 255} : Color{167, 227, 153, 255};
+    const Color ink = g_splash.darkMode ? Color{226, 232, 240, 255} : Color{51, 51, 51, 255};
+    const Color muted = g_splash.darkMode ? Color{148, 163, 184, 255} : Color{102, 102, 102, 255};
+    const Color accent = g_splash.darkMode ? Color{0, 210, 255, 255} : Color{72, 179, 175, 255};
+    const Color track = g_splash.darkMode ? Color{46, 46, 62, 255} : Color{224, 231, 234, 255};
 
     const float width = static_cast<float>(GetScreenWidth());
     const float height = static_cast<float>(GetScreenHeight());
-    const Rectangle frame{12.0f, 12.0f, width - 24.0f, height - 24.0f};
-    const Rectangle closeButton{width - 58.0f, 18.0f, 38.0f, 34.0f};
-    const Rectangle minimizeButton{width - 106.0f, 18.0f, 38.0f, 34.0f};
-    const Rectangle cancelButton{(width - 200.0f) * 0.5f, height - 92.0f, 200.0f, 48.0f};
+    const Rectangle frame{width * 0.031f, height * 0.054f, width * 0.938f, height * 0.87f};
+    const Rectangle closeButton{width - 71.0f, height * 0.068f, 38.0f, 34.0f};
+    const Rectangle minimizeButton{width - 121.0f, height * 0.068f, 38.0f, 34.0f};
+    const Rectangle cancelButton{(width - width * 0.20f) * 0.5f, height * 0.78f,
+                                 width * 0.20f, height * 0.078f};
 
     BeginDrawing();
     ClearBackground(background);
@@ -511,8 +524,8 @@ void DrawProgress(float progress, std::string_view status, std::uint64_t totalBy
     DrawLineEx(Vector2{closeButton.x + 27.0f, closeButton.y + 8.0f},
                Vector2{closeButton.x + 11.0f, closeButton.y + 24.0f}, 2.0f, ink);
 
-    const float iconSize = std::min(210.0f, height * 0.36f);
-    const float iconY = 48.0f;
+    const float iconSize = std::min(width * 0.235f, height * 0.38f);
+    const float iconY = height * 0.15f;
     if (g_splash.icon.id != 0) {
         const Rectangle source{0.0f, 0.0f, static_cast<float>(g_splash.icon.width),
                                static_cast<float>(g_splash.icon.height)};
@@ -526,10 +539,11 @@ void DrawProgress(float progress, std::string_view status, std::uint64_t totalBy
     }
 
     const std::string heading(status);
-    DrawCenteredSplashText(heading.c_str(), iconY + iconSize + 12.0f, 27.0f, ink);
+    DrawCenteredSplashText(heading.c_str(), iconY + iconSize + height * 0.036f,
+                           height * 0.037f, ink);
 
-    const float barWidth = width * 0.70f;
-    const float barHeight = 16.0f;
+    const float barWidth = width * 0.68f;
+    const float barHeight = height * 0.026f;
     const float barX = (width - barWidth) * 0.5f;
     const float barY = height * 0.64f;
     const Rectangle trackRect{barX, barY, barWidth, barHeight};
@@ -556,10 +570,10 @@ void DrawProgress(float progress, std::string_view status, std::uint64_t totalBy
     } else {
         details << FormatBytes(static_cast<double>(transferredBytes)) << " downloaded";
     }
-    details << "  |  ";
+    details << "  •  ";
     if (bytesPerSecond > 0.0) details << FormatBytes(bytesPerSecond) << "/s";
     else details << "Calculating speed...";
-    details << "  |  ";
+    details << "  •  ";
     if (totalBytes > transferredBytes && bytesPerSecond > 1.0) {
         details << FormatRemainingTime(static_cast<double>(totalBytes - transferredBytes) / bytesPerSecond);
     } else if (totalBytes == 0) {
@@ -568,7 +582,7 @@ void DrawProgress(float progress, std::string_view status, std::uint64_t totalBy
         details << "Almost done";
     }
     const std::string detailText = details.str();
-    const float detailSize = std::min(17.0f, width / 54.0f);
+    const float detailSize = std::min(height * 0.026f, width / 54.0f);
     DrawCenteredSplashText(detailText.c_str(), barY + 31.0f, detailSize, muted);
 
     if (WindowShouldClose()) g_splash.cancelRequested = true;
@@ -594,11 +608,12 @@ void DrawProgress(float progress, std::string_view status, std::uint64_t totalBy
 
     DrawRectangleRoundedLines(cancelButton, 0.18f, 12, accent);
     const char *cancelText = g_splash.cancelRequested ? "Cancelling..." : "Cancel";
-    const Vector2 cancelSize = MeasureTextEx(g_splash.font, cancelText, 19.0f, 0.5f);
+    const float cancelFontSize = height * 0.029f;
+    const Vector2 cancelSize = MeasureTextEx(g_splash.font, cancelText, cancelFontSize, 0.5f);
     DrawTextEx(g_splash.font, cancelText,
                Vector2{cancelButton.x + (cancelButton.width - cancelSize.x) * 0.5f,
                        cancelButton.y + (cancelButton.height - cancelSize.y) * 0.5f},
-               19.0f, 0.5f, accent);
+               cancelFontSize, 0.5f, accent);
     EndDrawing();
     if (minimizeRequested) MinimizeWindow();
     if (g_splash.cancelRequested) throw std::runtime_error("Aggiornamento annullato.");
@@ -757,7 +772,7 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
     if (needInstall) {
 #ifdef _WIN32
         SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
-        InitWindow(900, 580, "Blubox Installer");
+        InitWindow(960, 594, "Blubox Installer");
         if (!IsWindowReady()) throw std::runtime_error("Impossibile inizializzare la finestra di installazione Blubox.");
         SetTargetFPS(60);
         InitializeSplashWindow();
@@ -826,7 +841,7 @@ fs::path EnsureClientLauncherInstalled(const UpdateManifest &manifest, bool hasR
         const fs::path staging = fs::path(launcherPath.wstring() + L".tmp");
         fs::remove(staging);
         SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
-        InitWindow(900, 580, "Blubox Launcher Repair");
+        InitWindow(960, 594, "Blubox Launcher Repair");
         if (!IsWindowReady()) throw std::runtime_error("Impossibile inizializzare la riparazione del launcher.");
         SetTargetFPS(60);
         InitializeSplashWindow();
@@ -922,7 +937,7 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
 
     if (needsUpdate) {
         SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
-        InitWindow(900, 580, "Blubox Installer");
+        InitWindow(960, 594, "Blubox Installer");
         if (!IsWindowReady()) throw std::runtime_error("Impossibile inizializzare la finestra di aggiornamento.");
         SetTargetFPS(60);
         InitializeSplashWindow();

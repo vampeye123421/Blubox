@@ -3,6 +3,7 @@
 #include "Diagnostics.hpp"
 #include "ScriptEngine.hpp"
 #include "WebsiteApi.hpp"
+#include "BluboxStudioIcon.hpp"
 
 #include <raylib.h>
 #include <raymath.h>
@@ -1465,6 +1466,12 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
     }
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(kInitialWidth, kInitialHeight, "Blubox Studio");
+    Image appIcon = LoadImageFromMemory(".png", blubox::kBrandIconData, blubox::kBrandIconDataSize);
+    if (appIcon.data != nullptr) {
+        ImageFormat(&appIcon, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        SetWindowIcon(appIcon);
+        UnloadImage(appIcon);
+    }
     if (!IsWindowReady()) throw std::runtime_error("Could not create the Blubox Studio window.");
     SetTargetFPS(60);
     state.viewport = LoadRenderTexture(1280, 720);

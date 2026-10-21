@@ -1,12 +1,21 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.2.0 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.2.1 LANGUAGES C CXX)
+if(WIN32)
+    enable_language(RC)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
+
+set(BLUBOX_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/bloxity-icon.ico")
+set(BLUBOX_APP_ICON_PATH "${BLUBOX_APP_ICON}")
+file(TO_CMAKE_PATH "${BLUBOX_APP_ICON_PATH}" BLUBOX_APP_ICON_PATH)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(cmake/BluboxIcon.rc.in "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxIcon.rc" @ONLY)
 
 # Keep third-party demos and test targets out of the client build.
 set(BUILD_EXAMPLES OFF CACHE BOOL "Build raylib examples" FORCE)
@@ -76,6 +85,23 @@ add_custom_command(
 )
 target_sources(blubox_client PRIVATE "${BLUBOX_UI_FONT_HEADER}")
 
+set(BLUBOX_RUNTIME_ICON_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxBrandIcon.hpp")
+add_custom_command(
+    OUTPUT "${BLUBOX_RUNTIME_ICON_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/bloxity-icon.png"
+            "-DOUTPUT_FILE=${BLUBOX_RUNTIME_ICON_HEADER}"
+            "-DSYMBOL_NAME=kBrandIconData"
+            "-DSIZE_SYMBOL_NAME=kBrandIconDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/bloxity-icon.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+target_sources(blubox_client PRIVATE "${BLUBOX_RUNTIME_ICON_HEADER}")
+
 target_include_directories(blubox_client PRIVATE
     src
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
@@ -99,6 +125,7 @@ endif()
 if(WIN32)
     target_compile_definitions(blubox_client PRIVATE _WIN32_WINNT=0x0600)
     target_link_libraries(blubox_client PRIVATE winmm)
+    target_sources(blubox_client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxIcon.rc")
 endif()
 if(WIN32 AND MINGW)
     # Release builds must run on Windows machines without a MinGW installation.
@@ -108,7 +135,7 @@ endif()
 # The bootstrapper only links Raylib; it does not load Jolt or the game scene.
 set(BLUBOX_LAUNCHER_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/launcher-generated")
 set(BLUBOX_LAUNCHER_FONT_HEADER "${BLUBOX_LAUNCHER_GENERATED_DIR}/BluboxLauncherFont.hpp")
-set(BLUBOX_LAUNCHER_ICON_HEADER "${BLUBOX_LAUNCHER_GENERATED_DIR}/BluboxLauncherIcon.hpp")
+set(BLUBOX_LAUNCHER_ICON_HEADER "${BLUBOX_LAUNCHER_GENERATED_DIR}/BluboxBrandIcon.hpp")
 add_custom_command(
     OUTPUT "${BLUBOX_LAUNCHER_FONT_HEADER}"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${BLUBOX_LAUNCHER_GENERATED_DIR}"
@@ -129,8 +156,8 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}"
             "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/bloxity-icon.png"
             "-DOUTPUT_FILE=${BLUBOX_LAUNCHER_ICON_HEADER}"
-            "-DSYMBOL_NAME=kLauncherIconData"
-            "-DSIZE_SYMBOL_NAME=kLauncherIconDataSize"
+            "-DSYMBOL_NAME=kBrandIconData"
+            "-DSIZE_SYMBOL_NAME=kBrandIconDataSize"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
     DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/bloxity-icon.png"
@@ -147,6 +174,9 @@ add_executable(blubox_launcher
     "${BLUBOX_LAUNCHER_FONT_HEADER}"
     "${BLUBOX_LAUNCHER_ICON_HEADER}"
 )
+if(WIN32)
+    target_sources(blubox_launcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxIcon.rc")
+endif()
 target_include_directories(blubox_launcher PRIVATE src "${BLUBOX_LAUNCHER_GENERATED_DIR}")
 target_link_libraries(blubox_launcher PRIVATE raylib nlohmann_json::nlohmann_json)
 if(MSVC)
@@ -172,6 +202,9 @@ add_executable(blubox_studio_launcher
     "${BLUBOX_LAUNCHER_FONT_HEADER}"
     "${BLUBOX_LAUNCHER_ICON_HEADER}"
 )
+if(WIN32)
+    target_sources(blubox_studio_launcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxIcon.rc")
+endif()
 target_include_directories(blubox_studio_launcher PRIVATE src "${BLUBOX_LAUNCHER_GENERATED_DIR}")
 target_link_libraries(blubox_studio_launcher PRIVATE raylib nlohmann_json::nlohmann_json)
 target_compile_definitions(blubox_studio_launcher PRIVATE BLUBOX_STUDIO_LAUNCHER=1)

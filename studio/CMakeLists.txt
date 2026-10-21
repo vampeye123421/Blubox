@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
-project(BluboxStudio VERSION 0.1.0 LANGUAGES C CXX)
+project(BluboxStudio VERSION 0.1.1 LANGUAGES C CXX)
+if(WIN32)
+  enable_language(RC)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,6 +10,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include(FetchContent)
+
+set(BLUBOX_STUDIO_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/bloxity-icon.ico")
+set(BLUBOX_STUDIO_ICON_PATH "${BLUBOX_STUDIO_ICON}")
+file(TO_CMAKE_PATH "${BLUBOX_STUDIO_ICON_PATH}" BLUBOX_STUDIO_ICON_PATH)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(cmake/BluboxStudioIcon.rc.in
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxStudioIcon.rc" @ONLY)
 
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_GAMES OFF CACHE BOOL "" FORCE)
@@ -67,7 +77,25 @@ add_executable(blubox_studio WIN32
   studio/MapDocument.cpp
   studio/ScriptEngine.cpp
   studio/WebsiteApi.cpp)
-target_include_directories(blubox_studio PRIVATE studio)
+set(BLUBOX_STUDIO_ICON_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxStudioIcon.hpp")
+add_custom_command(
+  OUTPUT "${BLUBOX_STUDIO_ICON_HEADER}"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  COMMAND "${CMAKE_COMMAND}"
+    "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/bloxity-icon.png"
+    "-DOUTPUT_FILE=${BLUBOX_STUDIO_ICON_HEADER}"
+    "-DSYMBOL_NAME=kBrandIconData"
+    "-DSIZE_SYMBOL_NAME=kBrandIconDataSize"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+  DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/bloxity-icon.png"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+  VERBATIM)
+target_sources(blubox_studio PRIVATE "${BLUBOX_STUDIO_ICON_HEADER}")
+if(WIN32)
+  target_sources(blubox_studio PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxStudioIcon.rc")
+endif()
+target_include_directories(blubox_studio PRIVATE studio "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(blubox_studio PRIVATE
   blubox_studio_ui
   Luau.Compiler

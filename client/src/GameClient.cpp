@@ -1,4 +1,5 @@
 #include "GameClient.hpp"
+#include "BluboxBrandIcon.hpp"
 #include "BluboxUiFont.hpp"
 #include "RaylibCompat.hpp"
 
@@ -275,6 +276,12 @@ int GameClient::Run() {
     InitWindow(kWindowWidth, kWindowHeight, "Blubox Client - Local Guest");
     if (!IsWindowReady()) {
         return 1;
+    }
+    Image appIcon = LoadImageFromMemory(".png", blubox::kBrandIconData, blubox::kBrandIconDataSize);
+    if (appIcon.data != nullptr) {
+        ImageFormat(&appIcon, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+        SetWindowIcon(appIcon);
+        UnloadImage(appIcon);
     }
 
     if (options_.protocolLaunch.has_value() && options_.protocolLaunch->action == "join") {
