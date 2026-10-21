@@ -12,10 +12,13 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shlobj.h>
+#include <shobjidl.h>
 
 namespace {
 
 constexpr wchar_t kProtocolRegistryPath[] = L"Software\\Classes\\blubox";
+constexpr wchar_t kStudioProtocolRegistryPath[] = L"Software\\Classes\\blubox-studio";
 
 class RegistryKey {
 public:
@@ -113,5 +116,78 @@ void UnregisterBluboxProtocolForCurrentUser() {
     }
 #else
     throw std::runtime_error("La rimozione del protocollo blubox:// e' disponibile solo su Windows.");
+#endif
+}
+
+void RegisterBluboxStudioProtocolForCurrentUser(const std::filesystem::path &studioExecutable) {
+#ifdef _WIN32
+    const std::wstring executablePath = studioExecutable.wstring();
+    RegistryKey protocolKey;
+    LSTATUS status = RegCreateKeyExW(HKEY_CURRENT_USER, kStudioProtocolRegistryPath, 0, nullptr,
+                                     REG_OPTION_NON_VOLATILE, KEY_SET_VALUE | KEY_CREATE_SUB_KEY,
+                                     nullptr, protocolKey.Put(), nullptr);
+    if (status != ERROR_SUCCESS) ThrowRegistryError("Creazione della chiave blubox-studio", status);
+    SetStringValue(protocolKey.Get(), nullptr, L"URL:Blubox Studio Protocol");
+    SetStringValue(protocolKey.Get(), L"URL Protocol", L"");
+
+    RegistryKey iconKey;
+    status = RegCreateKeyExW(protocolKey.Get(), L"DefaultIcon", 0, nullptr,
+                             REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr,
+                             iconKey.Put(), nullptr);
+    if (status != ERROR_SUCCESS) ThrowRegistryError("Creazione dell'icona blubox-studio", status);
+    SetStringValue(iconKey.Get(), nullptr, L"\"" + executablePath + L"\",0");
+
+    RegistryKey commandKey;
+    status = RegCreateKeyExW(protocolKey.Get(), L"shell\\open\\command", 0, nullptr,
+                             REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr,
+                             commandKey.Put(), nullptr);
+    if (status != ERROR_SUCCESS) ThrowRegistryError("Creazione del comando blubox-studio", status);
+    SetStringValue(commandKey.Get(), nullptr, L"\"" + executablePath + L"\" \"%1\"");
+#else
+    (void)studioExecutable;
+    throw std::runtime_error("La registrazione blubox-studio:// e' disponibile solo su Windows.");
+#endif
+}
+
+void CreateBluboxStudioStartMenuShortcut(const std::filesystem::path &launcherExecutable) {
+#ifdef _WIN32
+    const HRESULT initResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(initResult) && initResult != RPC_E_CHANGED_MODE) {
+        throw std::runtime_error("Inizializzazione COM per il collegamento Studio non riuscita.");
+    }
+    IShellLinkW *link = nullptr;
+    IPersistFile *persist = nullptr;
+    PWSTR programsFolder = nullptr;
+    try {
+        HRESULT result = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                          IID_PPV_ARGS(&link));
+        if (FAILED(result)) throw std::runtime_error("Creazione del collegamento Studio non riuscita.");
+        const std::wstring path = launcherExecutable.wstring();
+        if (FAILED(link->SetPath(path.c_str())) || FAILED(link->SetArguments(L"--studio")) ||
+            FAILED(link->SetWorkingDirectory(launcherExecutable.parent_path().wstring().c_str())) ||
+            FAILED(link->SetDescription(L"Install and launch Blubox Studio"))) {
+            throw std::runtime_error("Configurazione del collegamento Studio non riuscita.");
+        }
+        result = link->QueryInterface(IID_PPV_ARGS(&persist));
+        if (FAILED(result)) throw std::runtime_error("Salvataggio del collegamento Studio non disponibile.");
+        result = SHGetKnownFolderPath(FOLDERID_Programs, KF_FLAG_CREATE, nullptr, &programsFolder);
+        if (FAILED(result)) throw std::runtime_error("Percorso Start Menu non disponibile.");
+        const std::filesystem::path shortcut = std::filesystem::path(programsFolder) / L"Blubox Studio.lnk";
+        result = persist->Save(shortcut.c_str(), TRUE);
+        if (FAILED(result)) throw std::runtime_error("Salvataggio del collegamento Studio non riuscito.");
+    } catch (...) {
+        if (programsFolder != nullptr) CoTaskMemFree(programsFolder);
+        if (persist != nullptr) persist->Release();
+        if (link != nullptr) link->Release();
+        if (SUCCEEDED(initResult)) CoUninitialize();
+        throw;
+    }
+    if (programsFolder != nullptr) CoTaskMemFree(programsFolder);
+    if (persist != nullptr) persist->Release();
+    if (link != nullptr) link->Release();
+    if (SUCCEEDED(initResult)) CoUninitialize();
+#else
+    (void)launcherExecutable;
+    throw std::runtime_error("Il collegamento Studio e' disponibile solo su Windows.");
 #endif
 }

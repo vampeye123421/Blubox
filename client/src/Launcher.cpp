@@ -1,6 +1,7 @@
 #include "Launcher.hpp"
 #include "BluboxLauncherFont.hpp"
 #include "BluboxLauncherIcon.hpp"
+#include "WindowsProtocolRegistration.hpp"
 
 #include <algorithm>
 #include <array>
@@ -61,6 +62,13 @@ struct UpdateManifest {
     std::string version;
     std::string downloadUrl;
     std::string sha256;
+    std::string studioVersion;
+    std::string studioDownloadUrl;
+    std::string studioSha256;
+    std::string studioFontUrl;
+    std::string studioFontSha256;
+    std::string studioCodeFontUrl;
+    std::string studioCodeFontSha256;
 };
 
 struct SplashState {
@@ -337,11 +345,33 @@ UpdateManifest ParseUpdateManifest(std::string_view contents) {
     if (json.contains("sha256") && json["sha256"].is_string()) {
         manifest.sha256 = json["sha256"].get<std::string>();
     }
+    const auto readString = [&json](const char *key, std::string &value) {
+        if (json.contains(key) && json[key].is_string()) value = json[key].get<std::string>();
+    };
+    readString("studioVersion", manifest.studioVersion);
+    readString("studioDownloadUrl", manifest.studioDownloadUrl);
+    readString("studioSha256", manifest.studioSha256);
+    readString("studioFontUrl", manifest.studioFontUrl);
+    readString("studioFontSha256", manifest.studioFontSha256);
+    readString("studioCodeFontUrl", manifest.studioCodeFontUrl);
+    readString("studioCodeFontSha256", manifest.studioCodeFontSha256);
     if (!manifest.downloadUrl.empty() || !manifest.sha256.empty()) {
         if (manifest.downloadUrl.empty() || manifest.sha256.size() != 64 ||
             !std::all_of(manifest.sha256.begin(), manifest.sha256.end(), [](unsigned char c) {
                 return std::isxdigit(c) != 0;
             })) throw std::runtime_error("URL o SHA-256 non validi nel manifest update.");
+    }
+    if (!manifest.studioVersion.empty()) {
+        const auto validHash = [](const std::string &hash) {
+            return hash.size() == 64 && std::all_of(hash.begin(), hash.end(), [](unsigned char c) {
+                return std::isxdigit(c) != 0;
+            });
+        };
+        if (manifest.studioDownloadUrl.empty() || !validHash(manifest.studioSha256) ||
+            manifest.studioFontUrl.empty() || !validHash(manifest.studioFontSha256) ||
+            manifest.studioCodeFontUrl.empty() || !validHash(manifest.studioCodeFontSha256)) {
+            throw std::runtime_error("Manifest Studio incompleto: servono eseguibile, font e checksum SHA-256.");
+        }
     }
     return manifest;
 }
@@ -654,13 +684,15 @@ void StartClient(const fs::path &client, int argc, char *argv[]) {
 
 } // namespace
 
-int RunLauncher(const LaunchOptions &, int argc, char *argv[]) {
+int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
     const fs::path launcherDirectory = ExecutablePath().parent_path();
     const fs::path installRoot = InstallRoot();
-    std::ifstream installedVersionFile(installRoot / "installed_version.txt");
+    std::ifstream installedVersionFile(installRoot / (options.launchStudio ? "installed_studio_version.txt" : "installed_version.txt"));
     std::string installedVersion;
     std::getline(installedVersionFile, installedVersion);
-    const fs::path previouslyInstalledClient = installRoot / "versions" / installedVersion / "blubox_client.exe";
+    const fs::path previouslyInstalledClient = options.launchStudio
+        ? installRoot / "studio" / "versions" / installedVersion / "blubox_studio.exe"
+        : installRoot / "versions" / installedVersion / "blubox_client.exe";
     const bool hasPreviousInstall = !installedVersion.empty() && fs::exists(previouslyInstalledClient);
 
     UpdateManifest manifest;
@@ -676,6 +708,10 @@ int RunLauncher(const LaunchOptions &, int argc, char *argv[]) {
         // Existing installs remain launchable offline. The sidecar manifest
         // and executable can also advance a local development install.
         if (hasPreviousInstall) {
+            if (options.launchStudio) {
+                StartClient(previouslyInstalledClient, argc, argv);
+                return 0;
+            }
             try {
                 manifest.version = ReadManifestVersion(launcherDirectory / "version.json");
                 if (!IsNewer(manifest.version, installedVersion)) {
@@ -694,11 +730,21 @@ int RunLauncher(const LaunchOptions &, int argc, char *argv[]) {
     manifest.version = ReadManifestVersion(launcherDirectory / "version.json");
 #endif
 
-    const fs::path versionDirectory = installRoot / "versions" / manifest.version;
-    fs::path installedClient = versionDirectory / "blubox_client.exe";
-    const bool remoteIsNewer = hasPreviousInstall && IsNewer(manifest.version, installedVersion);
+    const std::string targetVersion = options.launchStudio ? manifest.studioVersion : manifest.version;
+    if (options.launchStudio && targetVersion.empty()) {
+        throw std::runtime_error("Questa versione del launcher non include ancora Blubox Studio. Aggiorna il launcher e riprova.");
+    }
+    const fs::path versionDirectory = options.launchStudio
+        ? installRoot / "studio" / "versions" / targetVersion
+        : installRoot / "versions" / targetVersion;
+    fs::path installedClient = versionDirectory / (options.launchStudio ? "blubox_studio.exe" : "blubox_client.exe");
+    const bool remoteIsNewer = hasPreviousInstall && IsNewer(targetVersion, installedVersion);
     if (hasPreviousInstall && !remoteIsNewer) installedClient = previouslyInstalledClient;
-    const bool needsUpdate = !fs::exists(installedClient);
+    const bool studioFontsMissing = options.launchStudio &&
+        (!fs::exists(versionDirectory / "assets/editor/fonts/InterVariable.ttf") ||
+         !fs::exists(versionDirectory / "assets/editor/fonts/JetBrainsMono-Regular.ttf"));
+    const bool needsUpdate = !fs::exists(installedClient) || studioFontsMissing ||
+                             (hasRemoteManifest && remoteIsNewer);
 
     if (needsUpdate) {
         SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
@@ -707,14 +753,31 @@ int RunLauncher(const LaunchOptions &, int argc, char *argv[]) {
         SetTargetFPS(60);
         InitializeSplashWindow();
         fs::create_directories(versionDirectory);
-        const fs::path stagingClient = versionDirectory / "blubox_client.exe.tmp";
+        const fs::path stagingClient = versionDirectory / (options.launchStudio ? "blubox_studio.exe.tmp" : "blubox_client.exe.tmp");
         try {
             fs::remove(stagingClient);
-            if (hasRemoteManifest && !manifest.downloadUrl.empty()) {
+            const std::string &downloadUrl = options.launchStudio ? manifest.studioDownloadUrl : manifest.downloadUrl;
+            const std::string &downloadSha = options.launchStudio ? manifest.studioSha256 : manifest.sha256;
+            if (hasRemoteManifest && !downloadUrl.empty()) {
 #ifdef _WIN32
-                DownloadHttpsFile(manifest.downloadUrl, stagingClient);
-                if (Sha256File(stagingClient) != manifest.sha256) {
-                    throw std::runtime_error("Il checksum SHA-256 del client scaricato non corrisponde.");
+                DownloadHttpsFile(downloadUrl, stagingClient);
+                if (Sha256File(stagingClient) != downloadSha) {
+                    throw std::runtime_error("Il checksum SHA-256 del file scaricato non corrisponde.");
+                }
+                if (options.launchStudio) {
+                    const fs::path fontDirectory = versionDirectory / "assets" / "editor" / "fonts";
+                    fs::create_directories(fontDirectory);
+                    const auto downloadAsset = [](const std::string &url, const std::string &sha, const fs::path &destination) {
+                        const fs::path temporary = destination.wstring() + L".tmp";
+                        DownloadHttpsFile(url, temporary);
+                        if (Sha256File(temporary) != sha) {
+                            fs::remove(temporary);
+                            throw std::runtime_error("Checksum SHA-256 di un asset Studio non valido.");
+                        }
+                        fs::rename(temporary, destination);
+                    };
+                    downloadAsset(manifest.studioFontUrl, manifest.studioFontSha256, fontDirectory / "InterVariable.ttf");
+                    downloadAsset(manifest.studioCodeFontUrl, manifest.studioCodeFontSha256, fontDirectory / "JetBrainsMono-Regular.ttf");
                 }
 #else
                 throw std::runtime_error("Download automatico disponibile solo su Windows.");
@@ -724,7 +787,7 @@ int RunLauncher(const LaunchOptions &, int argc, char *argv[]) {
             }
             fs::remove(installedClient);
             fs::rename(stagingClient, installedClient);
-            DrawProgress(1.0f, "Starting Blubox...", 0, 0, 0.0);
+            DrawProgress(1.0f, options.launchStudio ? "Starting Blubox Studio..." : "Starting Blubox...", 0, 0, 0.0);
             CloseSplashWindow();
         } catch (...) {
             CloseSplashWindow();
@@ -734,11 +797,23 @@ int RunLauncher(const LaunchOptions &, int argc, char *argv[]) {
 
     if (installedClient.parent_path() == versionDirectory) {
         fs::create_directories(installRoot);
-        std::ofstream versionFile(installRoot / "installed_version.txt", std::ios::trunc);
-        versionFile << manifest.version << '\n';
+        std::ofstream versionFile(installRoot / (options.launchStudio ? "installed_studio_version.txt" : "installed_version.txt"), std::ios::trunc);
+        versionFile << targetVersion << '\n';
         if (!versionFile) throw std::runtime_error("Impossibile salvare la versione installata.");
     }
 
+    if (options.launchStudio) {
+#ifdef _WIN32
+        fs::create_directories(installRoot);
+        const fs::path installedLauncher = installRoot / "blubox_launcher.exe";
+        const fs::path currentLauncher = ExecutablePath();
+        if (currentLauncher.lexically_normal() != installedLauncher.lexically_normal()) {
+            fs::copy_file(currentLauncher, installedLauncher, fs::copy_options::overwrite_existing);
+        }
+        CreateBluboxStudioStartMenuShortcut(installedLauncher);
+#endif
+        RegisterBluboxStudioProtocolForCurrentUser(installedClient);
+    }
     StartClient(installedClient, argc, argv);
     return 0;
 }

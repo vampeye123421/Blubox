@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.1.8 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.1.9 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -156,7 +156,7 @@ else()
 endif()
 if(WIN32)
     target_compile_definitions(blubox_launcher PRIVATE _WIN32_WINNT=0x0600)
-    target_link_libraries(blubox_launcher PRIVATE winmm advapi32 shell32 winhttp bcrypt)
+    target_link_libraries(blubox_launcher PRIVATE winmm advapi32 shell32 ole32 winhttp bcrypt)
 endif()
 if(WIN32 AND MINGW)
     target_link_options(blubox_launcher PRIVATE -static -static-libgcc -static-libstdc++)

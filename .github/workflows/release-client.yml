@@ -1,4 +1,4 @@
-name: Build and publish Blubox client
+name: Build and publish Blubox apps
 
 on:
   push:
@@ -33,12 +33,31 @@ jobs:
         shell: msys2 {0}
         run: cmake --build build --config Release -- -j2
 
+      - name: Configure Blubox Studio
+        shell: msys2 {0}
+        run: cmake -S studio -B studio-build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Blubox Studio
+        shell: msys2 {0}
+        run: cmake --build studio-build --config Release --target blubox_studio -- -j2
+
       - name: Compute client checksum
         id: checksum
         shell: pwsh
         run: |
           $hash = (Get-FileHash build/blubox_client.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "sha256=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Compute Studio checksums
+        id: studio-checksum
+        shell: pwsh
+        run: |
+          $exe = (Get-FileHash studio-build/blubox_studio.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $font = (Get-FileHash studio/assets/editor/fonts/InterVariable.ttf -Algorithm SHA256).Hash.ToLowerInvariant()
+          $codeFont = (Get-FileHash studio/assets/editor/fonts/JetBrainsMono-Regular.ttf -Algorithm SHA256).Hash.ToLowerInvariant()
+          "exe=$exe" >> $env:GITHUB_OUTPUT
+          "font=$font" >> $env:GITHUB_OUTPUT
+          "code_font=$codeFont" >> $env:GITHUB_OUTPUT
 
       - name: Publish release binaries
         env:
@@ -48,14 +67,22 @@ jobs:
           gh release create "${{ github.ref_name }}" `
             "build/blubox_client.exe" `
             "build/blubox_launcher.exe" `
+            "studio-build/blubox_studio.exe" `
+            "studio/assets/editor/fonts/InterVariable.ttf" `
+            "studio/assets/editor/fonts/JetBrainsMono-Regular.ttf" `
+            "studio/assets/editor/fonts/Inter-LICENSE.txt" `
+            "studio/assets/editor/fonts/JetBrainsMono-LICENSE.txt" `
             --repo "${{ github.repository }}" `
             --title "Blubox ${{ github.ref_name }}" `
-            --notes "Client protocol v3: buffered jumping, per-session multiplayer identity, 3D player nameplates, and improved character lighting."
+            --notes "Blubox client and launcher update, plus the standalone Blubox Studio editor. Launch Studio from the launcher with --studio."
 
       - name: Publish matching launcher manifest
         uses: actions/github-script@v7
         env:
           CLIENT_SHA256: ${{ steps.checksum.outputs.sha256 }}
+          STUDIO_SHA256: ${{ steps.studio-checksum.outputs.exe }}
+          STUDIO_FONT_SHA256: ${{ steps.studio-checksum.outputs.font }}
+          STUDIO_CODE_FONT_SHA256: ${{ steps.studio-checksum.outputs.code_font }}
         with:
           script: |
             const version = context.ref.replace('refs/tags/v', '');
@@ -67,6 +94,13 @@ jobs:
             manifest.version = version;
             manifest.downloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/blubox_client.exe`;
             manifest.sha256 = process.env.CLIENT_SHA256;
+            manifest.studioVersion = '0.1.0';
+            manifest.studioDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/blubox_studio.exe`;
+            manifest.studioSha256 = process.env.STUDIO_SHA256;
+            manifest.studioFontUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/InterVariable.ttf`;
+            manifest.studioFontSha256 = process.env.STUDIO_FONT_SHA256;
+            manifest.studioCodeFontUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/JetBrainsMono-Regular.ttf`;
+            manifest.studioCodeFontSha256 = process.env.STUDIO_CODE_FONT_SHA256;
             await github.rest.repos.createOrUpdateFileContents({
               owner,
               repo,

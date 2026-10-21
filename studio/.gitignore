@@ -1,0 +1,12 @@
+# Local builds and CMake dependencies
+build/
+build-*/
+.deps/
+.cache/
+
+# IDE and operating system files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
