@@ -1,6 +1,7 @@
 /build/
 /client-build/
 /studio-build/
+/dist/
 /.cache/
 /.deps/
 **/CMakeCache.txt

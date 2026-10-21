@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(BluboxStudio VERSION 0.1.2 LANGUAGES C CXX)
+project(BluboxStudio VERSION 0.1.3 LANGUAGES C CXX)
 if(WIN32)
   enable_language(RC)
 endif()

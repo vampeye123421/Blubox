@@ -1,4 +1,4 @@
-# Blubox update feed
+# Blubox Client, Studio, and update feed
 
 `version.json` is consumed by the Windows bootstrap launcher from:
 
@@ -8,4 +8,4 @@ The manifest points to versioned GitHub Release assets and includes SHA-256 dige
 
 The client launcher creates a **Blubox Studio** Start Menu shortcut, registers `blubox://` and `blubox-studio://`, and installs versioned launchers under `%LOCALAPPDATA%\Blubox\launchers` so protocol and Start Menu entries can be repaired as launcher releases change.
 
-Each release includes `blubox_launcher.exe` and `blubox_studio_launcher.exe`. The client launcher is the registered `blubox://` handler and bootstraps both apps; the Studio launcher is used by the Start Menu shortcut and `blubox-studio://` handler. Both are installed by version under `%LOCALAPPDATA%\Blubox\launchers` and repaired from the checksum-protected release manifest.
+Each release also includes `Blubox-Setup.exe`, which installs the Client and Studio using two independent per-user installers. Each app has its own Start Menu and Desktop shortcut and its own Windows uninstall entry. The setup package is the website's recommended download; `blubox_launcher.exe` and `blubox_studio_launcher.exe` remain versioned updater payloads used by the app launch flow.
