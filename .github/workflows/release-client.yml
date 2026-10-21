@@ -29,6 +29,14 @@ jobs:
         shell: pwsh
         run: choco install innosetup --yes --no-progress
 
+      - name: Configure Client
+        shell: msys2 {0}
+        run: cmake -S client -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure Studio
+        shell: msys2 {0}
+        run: cmake -S studio -B studio-build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+
       - name: Build apps and installers
         shell: pwsh
         run: |
