@@ -52,12 +52,6 @@ void SetStringValue(HKEY key, const wchar_t *valueName, const std::wstring &valu
     if (status != ERROR_SUCCESS) ThrowRegistryError("Registry write", status);
 }
 
-void SetDwordValue(HKEY key, const wchar_t *valueName, DWORD value) {
-    const LSTATUS status = RegSetValueExW(key, valueName, 0, REG_DWORD,
-        reinterpret_cast<const BYTE *>(&value), sizeof(value));
-    if (status != ERROR_SUCCESS) ThrowRegistryError("Registry write", status);
-}
-
 std::wstring QuoteCommandArgument(const std::wstring &value) {
     return L"\"" + value + L"\"";
 }
@@ -109,45 +103,33 @@ void CreateAppShortcuts(const std::filesystem::path &launcherExecutable,
                         const wchar_t *shortcutName, const wchar_t *description) {
     const std::filesystem::path desktop = KnownFolderPath(FOLDERID_Desktop);
     const std::filesystem::path programs = KnownFolderPath(FOLDERID_Programs);
+    const std::wstring groupName = std::wstring(shortcutName) == L"Blubox"
+        ? L"Blubox Client" : L"Blubox Studio";
     SaveShortcut(launcherExecutable, desktop / (std::wstring(shortcutName) + L".lnk"), description);
-    SaveShortcut(launcherExecutable, programs / (std::wstring(shortcutName) + L".lnk"), description);
+    std::error_code error;
+    std::filesystem::remove(programs / (std::wstring(shortcutName) + L".lnk"), error);
+    std::filesystem::create_directories(programs / groupName, error);
+    SaveShortcut(launcherExecutable, programs / groupName / (std::wstring(shortcutName) + L".lnk"), description);
 }
 
 void DeleteAppShortcuts(const wchar_t *shortcutName) {
     for (const KNOWNFOLDERID *folder : {&FOLDERID_Desktop, &FOLDERID_Programs}) {
         try {
             std::error_code error;
-            std::filesystem::remove(KnownFolderPath(*folder) /
-                                    (std::wstring(shortcutName) + L".lnk"), error);
+            const std::filesystem::path base = KnownFolderPath(*folder);
+            std::filesystem::remove(base / (std::wstring(shortcutName) + L".lnk"), error);
+            error.clear();
+            const std::wstring groupName = std::wstring(shortcutName) == L"Blubox"
+                ? L"Blubox Client" : L"Blubox Studio";
+            std::filesystem::remove(base / groupName / (std::wstring(shortcutName) + L".lnk"), error);
+            if (folder == &FOLDERID_Programs) {
+                error.clear();
+                std::filesystem::remove(base / (std::wstring(shortcutName) + L".lnk"), error);
+            }
         } catch (...) {
             // Missing shell folders should not block uninstalling the binaries.
         }
     }
-}
-
-void RegisterUninstaller(const wchar_t *keyName, const wchar_t *displayName,
-                         const std::filesystem::path &launcherExecutable,
-                         const wchar_t *uninstallArgument, std::string_view version) {
-    const std::wstring subkey = std::wstring(kUninstallRegistryRoot) + keyName;
-    RegistryKey key;
-    const LSTATUS status = RegCreateKeyExW(HKEY_CURRENT_USER, subkey.c_str(), 0, nullptr,
-        REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, nullptr, key.Put(), nullptr);
-    if (status != ERROR_SUCCESS) ThrowRegistryError("Uninstaller registration", status);
-
-    const std::wstring executable = launcherExecutable.wstring();
-    std::wstring uninstallCommand = QuoteCommandArgument(executable);
-    uninstallCommand += L" ";
-    uninstallCommand += uninstallArgument;
-    const std::wstring displayVersion(version.begin(), version.end());
-    SetStringValue(key.Get(), L"DisplayName", displayName);
-    SetStringValue(key.Get(), L"DisplayVersion", displayVersion);
-    SetStringValue(key.Get(), L"Publisher", L"Blubox");
-    SetStringValue(key.Get(), L"InstallLocation", launcherExecutable.parent_path().parent_path().parent_path().wstring());
-    SetStringValue(key.Get(), L"DisplayIcon", QuoteCommandArgument(executable) + L",0");
-    SetStringValue(key.Get(), L"UninstallString", uninstallCommand);
-    SetStringValue(key.Get(), L"QuietUninstallString", uninstallCommand);
-    SetDwordValue(key.Get(), L"NoModify", 1);
-    SetDwordValue(key.Get(), L"NoRepair", 1);
 }
 
 void RemoveUninstaller(const wchar_t *keyName) {
@@ -354,7 +336,9 @@ void CreateBluboxStudioStartMenuShortcut(const std::filesystem::path &launcherEx
         if (FAILED(result)) throw std::runtime_error("Studio shortcut saving is unavailable.");
         result = SHGetKnownFolderPath(FOLDERID_Programs, KF_FLAG_CREATE, nullptr, &programsFolder);
         if (FAILED(result)) throw std::runtime_error("The Start Menu path is unavailable.");
-        const std::filesystem::path shortcut = std::filesystem::path(programsFolder) / L"Blubox Studio.lnk";
+        const std::filesystem::path shortcut = std::filesystem::path(programsFolder) /
+            L"Blubox Studio" / L"Blubox Studio.lnk";
+        std::filesystem::create_directories(shortcut.parent_path());
         result = persist->Save(shortcut.c_str(), TRUE);
         if (FAILED(result)) throw std::runtime_error("Could not save the Studio shortcut.");
     } catch (...) {
@@ -393,8 +377,11 @@ void CreateBluboxStudioShortcuts(const std::filesystem::path &launcherExecutable
 void RegisterBluboxClientUninstaller(const std::filesystem::path &launcherExecutable,
                                      std::string_view version) {
 #ifdef _WIN32
-    RegisterUninstaller(L"Blubox", L"Blubox", launcherExecutable,
-                        L"--uninstall-client", version);
+    // Inno Setup owns the Add/Remove Programs entry. Older launchers created a
+    // second entry here; remove that legacy entry instead of recreating it.
+    (void)launcherExecutable;
+    (void)version;
+    RemoveUninstaller(L"Blubox");
 #else
     (void)launcherExecutable;
     (void)version;
@@ -404,8 +391,11 @@ void RegisterBluboxClientUninstaller(const std::filesystem::path &launcherExecut
 void RegisterBluboxStudioUninstaller(const std::filesystem::path &launcherExecutable,
                                      std::string_view version) {
 #ifdef _WIN32
-    RegisterUninstaller(L"BluboxStudio", L"Blubox Studio", launcherExecutable,
-                        L"--uninstall-studio", version);
+    // Inno Setup owns the Add/Remove Programs entry. Older launchers created a
+    // second entry here; remove that legacy entry instead of recreating it.
+    (void)launcherExecutable;
+    (void)version;
+    RemoveUninstaller(L"BluboxStudio");
 #else
     (void)launcherExecutable;
     (void)version;

@@ -1,11 +1,11 @@
 #ifndef AppVersion
-  #define AppVersion "0.2.3"
+  #define AppVersion "0.2.4"
 #endif
 #ifndef ClientVersion
   #define ClientVersion AppVersion
 #endif
 #ifndef StudioVersion
-  #define StudioVersion "0.1.3"
+  #define StudioVersion "0.1.4"
 #endif
 #ifndef ProductMode
   #define ProductMode "Bundle"
@@ -73,6 +73,9 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 #if ProductMode == "Client"
+[InstallDelete]
+Type: files; Name: "{userprograms}\Blubox.lnk"
+
 [Files]
 Source: "{#StageDir}\BluboxClient.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\licenses\client\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -83,17 +86,21 @@ Name: "{group}\Blubox"; Filename: "{app}\BluboxClient.exe"
 Name: "{group}\Uninstall Blubox Client"; Filename: "{uninstallexe}"
 
 [Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\Blubox"; Flags: deletekey
 Root: HKCU; Subkey: "Software\Classes\blubox"; ValueType: string; ValueName: ""; ValueData: "URL:Blubox Protocol"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\blubox"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\blubox\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\BluboxClient.exe"",0"
 Root: HKCU; Subkey: "Software\Classes\blubox\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\BluboxClient.exe"" ""%1"""
 
 [UninstallDelete]
-Type: filesandordirs; Name: "{localappdata}\Blubox\Client\versions"
-Type: files; Name: "{localappdata}\Blubox\Client\installed_version.txt"
+Type: filesandordirs; Name: "{localappdata}\Blubox\versions"
+Type: files; Name: "{localappdata}\Blubox\installed_version.txt"
 #endif
 
 #if ProductMode == "Studio"
+[InstallDelete]
+Type: files; Name: "{userprograms}\Blubox Studio.lnk"
+
 [Files]
 Source: "{#StageDir}\BluboxStudio.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\assets\editor\fonts\InterVariable.ttf"; DestDir: "{app}\assets\editor\fonts"; Flags: ignoreversion
@@ -109,13 +116,14 @@ Name: "{group}\Blubox Studio"; Filename: "{app}\BluboxStudio.exe"
 Name: "{group}\Uninstall Blubox Studio"; Filename: "{uninstallexe}"
 
 [Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\BluboxStudio"; Flags: deletekey
 Root: HKCU; Subkey: "Software\Classes\blubox-studio"; ValueType: string; ValueName: ""; ValueData: "URL:Blubox Studio Protocol"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\blubox-studio"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\blubox-studio\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\BluboxStudio.exe"" ""%1"""
 
 [UninstallDelete]
-Type: filesandordirs; Name: "{localappdata}\Blubox\Studio\versions"
-Type: files; Name: "{localappdata}\Blubox\Studio\installed_studio_version.txt"
+Type: filesandordirs; Name: "{localappdata}\Blubox\studio\versions"
+Type: files; Name: "{localappdata}\Blubox\installed_studio_version.txt"
 Type: files; Name: "{localappdata}\BluboxStudio\session.json"
 #endif
 

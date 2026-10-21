@@ -109,13 +109,13 @@ jobs:
           $setup = (Get-FileHash dist/Blubox-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "setup=$setup" >> $env:GITHUB_OUTPUT
 
-      - name: Publish release binaries
+      - name: Publish updater payloads as a prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          gh release create "${{ github.ref_name }}" `
-            "dist/Blubox-Setup.exe" `
+          $runtimeTag = "runtime-${{ github.ref_name }}"
+          gh release create $runtimeTag `
             "build/blubox_client.exe" `
             "build/blubox_launcher.exe" `
             "build/blubox_studio_launcher.exe" `
@@ -125,8 +125,16 @@ jobs:
             "studio/assets/editor/fonts/Inter-LICENSE.txt" `
             "studio/assets/editor/fonts/JetBrainsMono-LICENSE.txt" `
             --repo "${{ github.repository }}" `
+            --title "Blubox runtime payloads for ${{ github.ref_name }}" `
+            --notes "Runtime files downloaded by the Blubox launcher. The user-facing installer is published separately on the matching stable release." `
+            --target "${{ github.sha }}" `
+            --prerelease
+
+          gh release create "${{ github.ref_name }}" `
+            "dist/Blubox-Setup.exe" `
+            --repo "${{ github.repository }}" `
             --title "Blubox ${{ github.ref_name }}" `
-            --notes "Unified Blubox installer for Client and Studio, plus the individual app binaries and updater assets."
+            --notes "Download Blubox Client and Studio with the unified installer."
 
       - name: Publish matching launcher manifest
         uses: actions/github-script@v7
@@ -147,19 +155,20 @@ jobs:
             const current = await github.rest.repos.getContent({ owner, repo, path, ref: 'main' });
             const manifest = JSON.parse(Buffer.from(current.data.content, 'base64').toString('utf8'));
             manifest.version = version;
-            manifest.downloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/blubox_client.exe`;
+            const runtimeTag = `runtime-v${version}`;
+            manifest.downloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_client.exe`;
             manifest.sha256 = process.env.CLIENT_SHA256;
             manifest.launcherVersion = version;
-            manifest.launcherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/blubox_launcher.exe`;
+            manifest.launcherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_launcher.exe`;
             manifest.launcherSha256 = process.env.CLIENT_LAUNCHER_SHA256;
             manifest.studioVersion = '${{ steps.versions.outputs.studio }}';
-            manifest.studioDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/blubox_studio.exe`;
+            manifest.studioDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_studio.exe`;
             manifest.studioSha256 = process.env.STUDIO_SHA256;
-            manifest.studioFontUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/InterVariable.ttf`;
+            manifest.studioFontUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/InterVariable.ttf`;
             manifest.studioFontSha256 = process.env.STUDIO_FONT_SHA256;
-            manifest.studioCodeFontUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/JetBrainsMono-Regular.ttf`;
+            manifest.studioCodeFontUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/JetBrainsMono-Regular.ttf`;
             manifest.studioCodeFontSha256 = process.env.STUDIO_CODE_FONT_SHA256;
-            manifest.studioLauncherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/blubox_studio_launcher.exe`;
+            manifest.studioLauncherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_studio_launcher.exe`;
             manifest.studioLauncherSha256 = process.env.STUDIO_LAUNCHER_SHA256;
             manifest.studioLauncherVersion = version;
             manifest.setupDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/Blubox-Setup.exe`;

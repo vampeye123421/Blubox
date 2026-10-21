@@ -313,6 +313,32 @@ fs::path InstallRoot() {
 #endif
 }
 
+void PruneVersionDirectories(const fs::path &root,
+                             const std::vector<fs::path> &preservedDirectories) {
+    std::error_code error;
+    if (!fs::is_directory(root, error)) return;
+    const fs::path normalizedRoot = fs::absolute(root, error).lexically_normal();
+    if (error) return;
+    for (fs::directory_iterator it(normalizedRoot, error), end; !error && it != end; it.increment(error)) {
+        std::error_code typeError;
+        if (!it->is_directory(typeError) || typeError) continue;
+        const fs::path candidate = it->path().lexically_normal();
+        bool preserve = false;
+        for (const fs::path &directory : preservedDirectories) {
+            if (!directory.empty() && candidate == fs::absolute(directory, typeError).lexically_normal() && !typeError) {
+                preserve = true;
+                break;
+            }
+            typeError.clear();
+        }
+        if (preserve) continue;
+        std::error_code removeError;
+        fs::remove_all(candidate, removeError);
+        // A previous app version may still be running. Leave locked files in
+        // place and retry pruning the folder the next time the launcher runs.
+    }
+}
+
 std::string ReadManifestVersion(const fs::path &manifest) {
     std::ifstream input(manifest);
     if (!input) throw std::runtime_error("Manifest not found: " + manifest.string());
@@ -822,6 +848,7 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
     std::ofstream versionFile(installRoot / "installed_studio_version.txt", std::ios::trunc);
     versionFile << manifest.studioVersion << '\n';
     if (!versionFile) throw std::runtime_error("Could not save the installed Studio version.");
+    PruneVersionDirectories(installRoot / "studio" / "versions", {versionDirectory});
 
 #ifdef _WIN32
     CreateBluboxStudioShortcuts(studioLauncherPath);
@@ -927,6 +954,12 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
 
     if (options.launchStudio) {
         const fs::path studio = EnsureStudioInstalled(manifest, hasRemoteManifest, installRoot, true);
+        const std::string studioLauncherVersion = manifest.studioLauncherVersion.empty()
+            ? manifest.studioVersion : manifest.studioLauncherVersion;
+        const fs::path studioLauncher = installRoot / "launchers" / studioLauncherVersion;
+        const fs::path clientLauncher = installRoot / "launchers" / manifest.launcherVersion;
+        PruneVersionDirectories(installRoot / "launchers",
+            {ExecutablePath().parent_path(), studioLauncher, clientLauncher});
         StartClient(studio, argc, argv);
         return 0;
     }
@@ -935,6 +968,11 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
     // The dedicated Studio launcher uses the same feed but skips this bootstrap.
     (void)EnsureStudioInstalled(manifest, hasRemoteManifest, installRoot, true);
     const fs::path installedLauncher = EnsureClientLauncherInstalled(manifest, hasRemoteManifest, installRoot);
+    const std::string studioLauncherVersion = manifest.studioLauncherVersion.empty()
+        ? manifest.studioVersion : manifest.studioLauncherVersion;
+    const fs::path studioLauncher = installRoot / "launchers" / studioLauncherVersion;
+    PruneVersionDirectories(installRoot / "launchers",
+        {ExecutablePath().parent_path(), installedLauncher.parent_path(), studioLauncher});
 
     const std::string targetVersion = manifest.version;
     const fs::path versionDirectory = installRoot / "versions" / targetVersion;
@@ -981,6 +1019,7 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
         versionFile << targetVersion << '\n';
         if (!versionFile) throw std::runtime_error("Could not save the installed version.");
     }
+    PruneVersionDirectories(installRoot / "versions", {installedClient.parent_path()});
 
 #ifdef _WIN32
     RegisterBluboxProtocolForCurrentUser(installedLauncher);

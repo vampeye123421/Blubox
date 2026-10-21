@@ -156,7 +156,7 @@ bool IsLoopbackHost(std::wstring_view host) {
 WebsiteApi::WebsiteApi() {
     const char* configured = std::getenv("BLUBOX_STUDIO_API_BASE_URL");
     baseUrl_ = configured != nullptr && *configured != '\0'
-        ? configured : "https://blubox-mailer.onrender.com";
+        ? configured : "https://blubox.runs-on.dev";
 }
 
 bool WebsiteApi::PublishMap(const MapDocument& document, std::string_view accessToken,
@@ -166,7 +166,7 @@ bool WebsiteApi::PublishMap(const MapDocument& document, std::string_view access
                                           accessToken, document.ToJson().dump());
         if (result.status < 200 || result.status >= 300) {
             if (result.status == 404) {
-                throw std::runtime_error("Studio API route is missing (HTTP 404). Redeploy the Blubox website mailer service to enable Studio publishing.");
+                throw std::runtime_error("The Blubox Studio API route was not found (HTTP 404). Update Blubox Studio and try again.");
             }
             std::string detail;
             try {

@@ -54,18 +54,19 @@ against Supabase Auth and limits map reads and writes to the authenticated owner
 `D:\blubox-website\supabase\studio-maps.sql` in the Supabase SQL editor before enabling cloud
 map persistence.
 
-The production API base defaults to the website's private server-side companion service at
-`https://blubox-mailer.onrender.com`; local builds can override it with
-`BLUBOX_STUDIO_API_BASE_URL`. This avoids sending native API requests to the static-site host,
-which cannot execute API routes.
+The production API base defaults to `https://blubox.runs-on.dev`. Vercel routes `/api/studio/*`
+to the private mailer service; local builds can override the base with
+`BLUBOX_STUDIO_API_BASE_URL`.
 
 ## Studio sign-in
 
-Studio opens `https://blubox.runs-on.dev/auth/studio` for sign-in. On success, the website
-redirects to `blubox-studio://auth?token=<URL-encoded-session-token>`. Studio validates that
-token with `GET /api/studio/session` using `Authorization: Bearer <token>`; the endpoint should
-return an authenticated `user` object with an `id` and optionally `displayName`, `display_name`,
-`name`, or `email`. Sign-in is not considered complete until that request succeeds.
+Studio opens `https://blubox.runs-on.dev/auth/studio` for sign-in. Studio creates a random
+single-use handoff ID and polls `POST /api/studio/handoff/redeem`. The signed-in website stores
+the Supabase session in a restricted, short-lived Supabase handoff row, keyed by a SHA-256 hash
+of that ID. The row expires after three minutes and is deleted when Studio redeems it. Studio
+then validates the session with `GET /api/studio/session`. Apply
+`D:\blubox-website\supabase\studio-auth-handoffs.sql` to the production Supabase project before
+deploying the website change. The browser also offers a custom-protocol fallback when needed.
 
 The saved token is DPAPI-protected for the current Windows user and stored as ciphertext in
 `%LOCALAPPDATA%\BluboxStudio\session.json`. It is decrypted only in memory for API requests.
