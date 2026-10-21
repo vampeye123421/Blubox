@@ -101,7 +101,7 @@ JPH::BodyID PhysicsWorld::CreateStaticBox(const JPH::RVec3 &position, const JPH:
     JPH::BodyInterface &bodyInterface = physicsSystem_->GetBodyInterface();
     const JPH::BodyID bodyId = bodyInterface.CreateAndAddBody(settings, JPH::EActivation::DontActivate);
     if (bodyId.IsInvalid()) {
-        throw std::runtime_error("Jolt non ha potuto creare il corpo statico del terreno.");
+        throw std::runtime_error("Jolt could not create the static ground body.");
     }
     ownedBodies_.push_back(bodyId);
     return bodyId;
@@ -123,7 +123,7 @@ JPH::BodyID PhysicsWorld::CreateDynamicCapsule(const JPH::RVec3 &position,
     JPH::BodyInterface &bodyInterface = physicsSystem_->GetBodyInterface();
     const JPH::BodyID bodyId = bodyInterface.CreateAndAddBody(settings, JPH::EActivation::Activate);
     if (bodyId.IsInvalid()) {
-        throw std::runtime_error("Jolt non ha potuto creare il corpo dinamico del giocatore.");
+        throw std::runtime_error("Jolt could not create the player's dynamic body.");
     }
     ownedBodies_.push_back(bodyId);
     return bodyId;
@@ -158,7 +158,7 @@ void PhysicsWorld::Step(float frameDeltaSeconds) {
         const JPH::EPhysicsUpdateError errors =
             physicsSystem_->Update(kFixedTimeStep, 1, tempAllocator_.get(), jobSystem_.get());
         if (errors != JPH::EPhysicsUpdateError::None) {
-            throw std::runtime_error("Jolt ha esaurito la capacita' di contatti o coppie di corpi.");
+            throw std::runtime_error("Jolt ran out of contact or body-pair capacity.");
         }
         accumulatedTime_ -= kFixedTimeStep;
         ++steps;

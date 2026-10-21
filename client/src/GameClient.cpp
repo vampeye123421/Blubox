@@ -309,14 +309,14 @@ int GameClient::Run() {
             lightingShader_.locs[SHADER_LOC_MATRIX_MODEL] < 0 ||
             lightingShader_.locs[SHADER_LOC_MATRIX_NORMAL] < 0 ||
             lightingShader_.locs[SHADER_LOC_COLOR_DIFFUSE] < 0) {
-            TraceLog(LOG_WARNING, "Shader luce incompleto; uso il rendering Raylib standard.");
+        TraceLog(LOG_WARNING, "Lighting shader is incomplete; using the standard Raylib renderer.");
             UnloadShader(lightingShader_);
             lightingShader_ = Shader{};
         } else {
             SetShaderValue(lightingShader_, ambientLocation, &ambient, SHADER_UNIFORM_FLOAT);
         }
     } else {
-        TraceLog(LOG_WARNING, "Shader luce non disponibile; uso il rendering standard.");
+        TraceLog(LOG_WARNING, "Lighting shader unavailable; using the standard renderer.");
     }
 
     CreateCapsuleCharacterModelsSafe(&characterCylinderModel_, &characterSphereModel_,
@@ -332,7 +332,7 @@ int GameClient::Run() {
             characterSphereModel_.materials[0].shader = lightingShader_;
         }
     } else {
-        TraceLog(LOG_WARNING, "Mesh personaggio non disponibili; uso la capsula Raylib.");
+        TraceLog(LOG_WARNING, "Player mesh unavailable; using the Raylib capsule.");
     }
 
     skyboxShader_ = LoadShaderFromMemory(kSkyboxVertexShader, kSkyboxFragmentShader);
@@ -356,7 +356,7 @@ int GameClient::Run() {
                            SHADER_UNIFORM_INT);
             skyboxReady_ = true;
         } else {
-            TraceLog(LOG_WARNING, "Skybox cubemap non disponibile; uso il colore di sfondo.");
+            TraceLog(LOG_WARNING, "Cubemap skybox unavailable; using the background color.");
         }
     }
     sunTexture_ = CreateSunTexture();
@@ -378,7 +378,7 @@ int GameClient::Run() {
                                                    blubox::kUiFontDataSize, 32);
     }
     if (customFontLoaded_) SetTextureFilter(uiFont_.texture, TEXTURE_FILTER_BILINEAR);
-    else TraceLog(LOG_WARNING, "Font UI incorporato non caricato; uso il font Raylib.");
+    else TraceLog(LOG_WARNING, "Embedded UI font could not be loaded; using the Raylib font.");
     TraceLog(LOG_INFO, "GameClient: lighting, cubemap sky and UI font initialized.");
 
     physicsWorld_.CreateStaticBox(JPH::RVec3(0.0, -kGroundThickness * 0.5, 0.0),
@@ -389,13 +389,13 @@ int GameClient::Run() {
     TraceLog(LOG_INFO, "GameClient: player created.");
 
     if (session_.HasToken()) {
-        TraceLog(LOG_INFO, "Sessione di autenticazione pronta; token mantenuto solo in memoria.");
+        TraceLog(LOG_INFO, "Authentication session ready; token kept in memory only.");
     } else if (options_.protocolLaunch.has_value() && options_.protocolLaunch->action == "join") {
-        TraceLog(LOG_WARNING, "Richiesta join senza token: sessione non autenticata.");
+        TraceLog(LOG_WARNING, "Join requested without a token; the session is not authenticated.");
     }
     if (options_.protocolLaunch.has_value() && options_.protocolLaunch->action == "join" &&
         !session_.HasWorldId()) {
-        TraceLog(LOG_WARNING, "Richiesta join senza worldId.");
+        TraceLog(LOG_WARNING, "Join requested without a worldId.");
     }
 
     camera_.up = Vector3{0.0f, 1.0f, 0.0f};

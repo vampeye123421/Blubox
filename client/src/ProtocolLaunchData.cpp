@@ -28,18 +28,18 @@ std::string PercentDecode(std::string_view value) {
         }
 
         if (i + 2 >= value.size()) {
-            throw std::invalid_argument("Codifica percentuale incompleta nell'URL blubox://.");
+            throw std::invalid_argument("Incomplete percent encoding in the blubox:// URL.");
         }
 
         const int high = HexValue(value[i + 1]);
         const int low = HexValue(value[i + 2]);
         if (high < 0 || low < 0) {
-            throw std::invalid_argument("Codifica percentuale non valida nell'URL blubox://.");
+            throw std::invalid_argument("Invalid percent encoding in the blubox:// URL.");
         }
 
         const char decodedByte = static_cast<char>((high << 4) | low);
         if (decodedByte == '\0') {
-            throw std::invalid_argument("L'URL blubox:// non puo' contenere byte NUL codificati.");
+            throw std::invalid_argument("The blubox:// URL cannot contain encoded NUL bytes.");
         }
         decoded.push_back(decodedByte);
         i += 2;
@@ -59,7 +59,7 @@ std::string LowerAscii(std::string value) {
 void AssignUnique(std::optional<std::string> &field, const std::string &value,
                   const char *fieldName) {
     if (field.has_value()) {
-        throw std::invalid_argument(std::string("L'URL blubox:// contiene piu' valori per ") + fieldName + ".");
+        throw std::invalid_argument(std::string("The blubox:// URL contains multiple values for ") + fieldName + ".");
     }
     field = value;
 }
@@ -70,7 +70,7 @@ ProtocolLaunchData ParseBluboxUri(const std::string &url) {
     std::string_view uri(url);
     if (uri.size() < kBluboxScheme.size() ||
         LowerAscii(std::string(uri.substr(0, kBluboxScheme.size()))) != kBluboxScheme) {
-        throw std::invalid_argument("Schema URL non valido: era atteso blubox://.");
+        throw std::invalid_argument("Invalid URL scheme: expected blubox://.");
     }
 
     ProtocolLaunchData data;
@@ -100,7 +100,7 @@ ProtocolLaunchData ParseBluboxUri(const std::string &url) {
     }
 
     if (routeSegments.empty() || routeSegments.front().empty()) {
-        throw std::invalid_argument("L'URL blubox:// deve specificare un'azione, per esempio join o launch.");
+        throw std::invalid_argument("The blubox:// URL must specify an action, such as join or launch.");
     }
 
     data.action = LowerAscii(std::move(routeSegments.front()));
@@ -138,19 +138,19 @@ ProtocolLaunchData ParseBluboxUri(const std::string &url) {
                 : PercentDecode(parameter.substr(equalsPosition + 1));
 
             if (key.empty()) {
-                throw std::invalid_argument("L'URL blubox:// contiene un parametro senza nome.");
+                throw std::invalid_argument("The blubox:// URL contains an unnamed parameter.");
             }
             if (!data.queryParameters.emplace(key, value).second) {
-                throw std::invalid_argument("L'URL blubox:// contiene un parametro duplicato: " + key + ".");
+                throw std::invalid_argument("The blubox:// URL contains a duplicate parameter: " + key + ".");
             }
 
             if (key == "token" || key == "session_token" || key == "sessiontoken") {
-                AssignUnique(data.sessionToken, value, "token di sessione");
+                AssignUnique(data.sessionToken, value, "session token");
             } else if (key == "world" || key == "world_id" || key == "worldid" ||
                        key == "place" || key == "place_id" || key == "placeid" ||
                        key == "game_id" || key == "gameid" || key == "id") {
                 if (data.worldId.has_value() && *data.worldId != value) {
-                    throw std::invalid_argument("L'URL blubox:// specifica world ID in conflitto.");
+                    throw std::invalid_argument("The blubox:// URL specifies conflicting world IDs.");
                 }
                 data.worldId = value;
             }

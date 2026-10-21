@@ -95,16 +95,16 @@ NetworkClient::~NetworkClient() {
 
 bool NetworkClient::Connect(const ClientSession &session) {
     if (!session.HasToken()) {
-        TraceLog(LOG_WARNING, "ENet non avviato: manca il token della sessione join.");
+        TraceLog(LOG_WARNING, "ENet not started: the join session token is missing.");
         return false;
     }
     if (!session.HasWorldId()) {
-        TraceLog(LOG_WARNING, "ENet non avviato: manca il worldId della sessione join.");
+        TraceLog(LOG_WARNING, "ENet not started: the join session worldId is missing.");
         return false;
     }
 
     if (enet_initialize() != 0) {
-        TraceLog(LOG_ERROR, "Inizializzazione ENet non riuscita; continuo in modalita' locale.");
+        TraceLog(LOG_ERROR, "ENet initialization failed; continuing in local mode.");
         return false;
     }
     enetInitialized_ = true;
@@ -112,7 +112,7 @@ bool NetworkClient::Connect(const ClientSession &session) {
 
     host_ = enet_host_create(nullptr, 1, 1, 0, 0);
     if (host_ == nullptr) {
-        TraceLog(LOG_ERROR, "Creazione host ENet non riuscita; continuo in modalita' locale.");
+        TraceLog(LOG_ERROR, "Could not create the ENet host; continuing in local mode.");
         Shutdown();
         return false;
     }
@@ -120,7 +120,7 @@ bool NetworkClient::Connect(const ClientSession &session) {
     ENetAddress address{};
     // Resolve the fixed hostname at runtime instead of embedding a numeric IP.
     if (enet_address_set_host(&address, kServerHost) != 0) {
-        TraceLog(LOG_ERROR, "Risoluzione DNS non riuscita per il server Blubox.");
+        TraceLog(LOG_ERROR, "DNS lookup failed for the Blubox server.");
         Shutdown();
         return false;
     }
@@ -128,12 +128,12 @@ bool NetworkClient::Connect(const ClientSession &session) {
 
     peer_ = enet_host_connect(host_, &address, 1, 0);
     if (peer_ == nullptr) {
-        TraceLog(LOG_ERROR, "Avvio connessione ENet non riuscito; continuo in modalita' locale.");
+        TraceLog(LOG_ERROR, "Could not start the ENet connection; continuing in local mode.");
         Shutdown();
         return false;
     }
 
-    TraceLog(LOG_INFO, "Connessione ENet avviata verso %s:%u.", kServerHost,
+    TraceLog(LOG_INFO, "Started ENet connection to %s:%u.", kServerHost,
              static_cast<unsigned int>(kServerPort));
     return true;
 }
@@ -146,19 +146,19 @@ void NetworkClient::Poll() {
     while ((result = enet_host_service(host_, &event, 0)) > 0) {
         switch (event.type) {
         case ENET_EVENT_TYPE_CONNECT:
-            TraceLog(LOG_INFO, "Connessione ENet stabilita; invio handshake join.");
+            TraceLog(LOG_INFO, "ENet connection established; sending join handshake.");
             if (!SendJoinHandshake()) {
-                TraceLog(LOG_ERROR, "Invio handshake ENet non riuscito.");
+                TraceLog(LOG_ERROR, "Could not send the ENet handshake.");
                 enet_peer_disconnect(event.peer, 0);
             }
             break;
         case ENET_EVENT_TYPE_RECEIVE:
-            TraceLog(LOG_INFO, "Pacchetto ENet ricevuto (%zu byte).", event.packet->dataLength);
+            TraceLog(LOG_INFO, "Received ENet packet (%zu bytes).", event.packet->dataLength);
             HandlePacket(event.packet->data, event.packet->dataLength);
             enet_packet_destroy(event.packet);
             break;
         case ENET_EVENT_TYPE_DISCONNECT:
-            TraceLog(LOG_WARNING, "Connessione ENet chiusa dal server (codice %u).", event.data);
+            TraceLog(LOG_WARNING, "ENet connection closed by server (code %u).", event.data);
             peer_ = nullptr;
             break;
         case ENET_EVENT_TYPE_NONE:
@@ -168,7 +168,7 @@ void NetworkClient::Poll() {
     }
 
     if (result < 0) {
-        TraceLog(LOG_ERROR, "Errore durante il servizio eventi ENet.");
+        TraceLog(LOG_ERROR, "Error while servicing ENet events.");
     }
 }
 
@@ -176,7 +176,7 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
     if (data == nullptr || size < 2) return;
     const auto *bytes = reinterpret_cast<const enet_uint8 *>(data);
     if (bytes[1] != kProtocolVersion) {
-        TraceLog(LOG_WARNING, "Pacchetto ENet con versione protocollo non supportata.");
+        TraceLog(LOG_WARNING, "ENet packet uses an unsupported protocol version.");
         return;
     }
 
@@ -188,14 +188,14 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
             size != 12 + idLength) return;
         userId_.assign(reinterpret_cast<const char *>(bytes + 12), idLength);
         authenticated_ = true;
-        TraceLog(LOG_INFO, "Handshake autenticato per il player %s.", userId_.c_str());
+        TraceLog(LOG_INFO, "Handshake authenticated for player %s.", userId_.c_str());
         return;
     }
 
     if (bytes[0] != kWorldSnapshotMessage || size < 4 || !authenticated_) return;
     const std::size_t count = ReadU16(bytes + 2);
     if (count > kMaxSnapshotPlayers) {
-        TraceLog(LOG_WARNING, "Snapshot ENet rifiutato: troppi player.");
+        TraceLog(LOG_WARNING, "ENet snapshot rejected: too many players.");
         return;
     }
 
@@ -254,7 +254,7 @@ bool NetworkClient::SendJoinHandshake() {
     const std::string &worldId = session_->WorldId();
     if (token.empty() || worldId.empty() || token.size() > kMaxTokenBytes ||
         worldId.size() > kMaxWorldIdBytes) {
-        TraceLog(LOG_ERROR, "Handshake rifiutato: credenziali mancanti o troppo lunghe.");
+        TraceLog(LOG_ERROR, "Handshake rejected: credentials are missing or too long.");
         return false;
     }
 

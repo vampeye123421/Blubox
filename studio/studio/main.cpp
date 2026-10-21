@@ -234,10 +234,12 @@ struct StudioState {
     float cameraPitch = 0.0f;
     bool authenticated = false;
     bool validatingSession = false;
+    bool forceInteractiveLoginAfterValidation = false;
     bool loginBrowserOpened = false;
     bool projectOpen = false;
     std::future<SessionValidation> validationTask;
     std::future<StudioHandoffPoll> handoffPollTask;
+    std::string pendingHandoffToken;
     std::string pendingHandoffId;
     std::string lastHandoffError;
     std::chrono::steady_clock::time_point nextHandoffPoll{};
@@ -404,14 +406,19 @@ void PollSessionValidation(StudioState& state) {
             std::fill(result.token.begin(), result.token.end(), '\0');
         } else if (!result.token.empty()) {
             state.lastHandoffError.clear();
-            if (!state.validatingSession && result.token != state.websiteToken) {
+            if (result.token != state.websiteToken) {
                 blubox::studio::LogDiagnostic("INFO", "Website delivered the browser session through the one-time handoff; token redacted.");
                 state.pendingHandoffId.clear();
                 state.handoffDeadline = {};
                 std::string saveError;
                 if (SessionStore::Save(result.token, saveError)) {
                     state.observedSessionFileTime = SessionStore::ModifiedTime();
-                    BeginSessionValidation(state, std::move(result.token));
+                    if (state.validatingSession) {
+                        std::fill(state.pendingHandoffToken.begin(), state.pendingHandoffToken.end(), '\0');
+                        state.pendingHandoffToken = std::move(result.token);
+                    } else {
+                        BeginSessionValidation(state, std::move(result.token));
+                    }
                 } else {
                     std::fill(result.token.begin(), result.token.end(), '\0');
                     state.authError = saveError;
@@ -430,6 +437,7 @@ void PollSessionValidation(StudioState& state) {
         handoffNow >= state.nextHandoffPoll) {
         if (handoffNow >= state.handoffDeadline) {
             state.pendingHandoffId.clear();
+            state.loginBrowserOpened = false;
             state.authError = "Studio sign-in expired. Click the sign-in button to try again.";
             blubox::studio::LogDiagnostic("WARNING", "Browser-to-Studio sign-in handoff expired before a session arrived.");
         } else {
@@ -448,7 +456,17 @@ void PollSessionValidation(StudioState& state) {
         state.validationTask.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
         SessionValidation result = state.validationTask.get();
         state.validatingSession = false;
-        if (result.valid) {
+        const bool supersededByInteractiveLogin = state.forceInteractiveLoginAfterValidation;
+        state.forceInteractiveLoginAfterValidation = false;
+        if (supersededByInteractiveLogin) {
+            blubox::studio::LogDiagnostic("INFO", "Ignored the saved-session result because a new browser sign-in was requested.");
+            std::fill(result.token.begin(), result.token.end(), '\0');
+            if (!state.pendingHandoffToken.empty()) {
+                std::string token = std::move(state.pendingHandoffToken);
+                state.pendingHandoffToken.clear();
+                BeginSessionValidation(state, std::move(token));
+            }
+        } else if (result.valid) {
             blubox::studio::LogDiagnostic("INFO", "Website session validation succeeded.");
             TraceLog(LOG_INFO, "Studio sign-in validated for %s.", result.displayName.c_str());
             state.websiteToken = std::move(result.token);
@@ -508,6 +526,7 @@ void PollSessionValidation(StudioState& state) {
 
 void StartBrowserLogin(StudioState& state) {
     if (!state.pendingHandoffId.empty()) return;
+    const bool supersedeSavedSessionCheck = state.validatingSession;
     std::string error;
     std::string handoffId;
     if (!blubox::studio::CreateStudioHandoffId(handoffId, error)) {
@@ -520,7 +539,14 @@ void StartBrowserLogin(StudioState& state) {
         state.handoffDeadline = state.nextHandoffPoll + std::chrono::minutes(3);
         state.lastHandoffError.clear();
         state.loginBrowserOpened = true;
+        state.forceInteractiveLoginAfterValidation = supersedeSavedSessionCheck;
         state.authError.clear();
+        std::string clearError;
+        if (SessionStore::Clear(clearError)) {
+            state.observedSessionFileTime = SessionStore::ModifiedTime();
+        } else {
+            state.authError = "Could not clear the previous saved session: " + clearError;
+        }
     } else state.authError = std::move(error);
 }
 
@@ -545,6 +571,7 @@ void Logout(StudioState& state) {
     state.projectOpen = false;
     state.authenticated = false;
     state.validatingSession = false;
+    state.forceInteractiveLoginAfterValidation = false;
     state.loginBrowserOpened = false;
     state.pendingHandoffId.clear();
     state.handoffDeadline = {};
@@ -552,6 +579,8 @@ void Logout(StudioState& state) {
     state.displayName.clear();
     std::fill(state.websiteToken.begin(), state.websiteToken.end(), '\0');
     state.websiteToken.clear();
+    std::fill(state.pendingHandoffToken.begin(), state.pendingHandoffToken.end(), '\0');
+    state.pendingHandoffToken.clear();
     state.observedSessionFileTime = SessionStore::ModifiedTime();
     SetStatus(state, "Signed out. Sign in to open a project.");
 }
@@ -711,23 +740,24 @@ void SetupDefaultDockLayout() {
 }
 
 void DrawLoginModal(StudioState& state) {
-    ImGui::OpenPopup("Accedi a Blubox Studio");
+    ImGui::OpenPopup("Sign in to Blubox Studio");
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Always);
-    if (ImGui::BeginPopupModal("Accedi a Blubox Studio", nullptr,
+    if (ImGui::BeginPopupModal("Sign in to Blubox Studio", nullptr,
                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("Accedi con il tuo account Blubox nel browser per aprire Studio.");
+        ImGui::TextWrapped("Sign in with your Blubox account in your browser to open Studio.");
         ImGui::Spacing();
         if (state.validatingSession) {
-            ImGui::TextDisabled("Verifica della sessione in corso...");
-        } else if (!state.pendingHandoffId.empty()) {
-            ImGui::TextDisabled("In attesa del completamento dell'accesso nel browser...");
-        } else if (ImGui::Button("Accedi con il Web", ImVec2(-1.0f, 42.0f))) {
+            ImGui::TextDisabled("Checking your saved session...");
+        }
+        if (state.pendingHandoffId.empty() && ImGui::Button("Sign in on the web", ImVec2(-1.0f, 42.0f))) {
             StartBrowserLogin(state);
         }
-        if (state.loginBrowserOpened && !state.validatingSession) {
-            ImGui::TextWrapped("Completa l'accesso nel browser. Studio completerà l'accesso automaticamente.");
+        if (!state.pendingHandoffId.empty()) {
+            ImGui::TextDisabled("Waiting for sign-in to finish in your browser...");
+        } else if (state.loginBrowserOpened) {
+            ImGui::TextWrapped("Finish signing in in your browser. Studio will continue automatically.");
         }
         if (!state.authError.empty()) {
             ImGui::Spacing();
@@ -1533,6 +1563,7 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
     rlImGuiShutdown();
     if (state.viewport.texture.id != 0) UnloadRenderTexture(state.viewport);
     std::fill(state.websiteToken.begin(), state.websiteToken.end(), '\0');
+    std::fill(state.pendingHandoffToken.begin(), state.pendingHandoffToken.end(), '\0');
     CloseWindow();
     return 0;
 }

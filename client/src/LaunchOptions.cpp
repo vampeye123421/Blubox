@@ -35,28 +35,39 @@ LaunchOptions ParseLaunchOptions(int argc, char *argv[]) {
             options.registerProtocol = true;
         } else if (argument == "--unregister-protocol") {
             options.unregisterProtocol = true;
+        } else if (argument == "--uninstall-client") {
+            options.uninstallClient = true;
+        } else if (argument == "--uninstall-studio") {
+            options.uninstallStudio = true;
+        } else if (argument == "--quiet") {
+            // Registered as the quiet Add/Remove Programs command; uninstall has no prompts.
         } else if (argument == "--mode=guest") {
             options.mode = "guest";
         } else if (argument == "--mode") {
             if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--")) {
-                throw std::invalid_argument("--mode richiede un valore (per esempio: --mode guest).");
+                throw std::invalid_argument("--mode requires a value (for example: --mode guest).");
             }
             options.mode = argv[++i];
             if (options.mode != "guest") {
-                throw std::invalid_argument("Modalita' non supportata: " + options.mode + ". Per ora e' disponibile solo guest.");
+                throw std::invalid_argument("Unsupported mode: " + options.mode + ". Guest is the only mode currently available.");
             }
         } else if (HasBluboxScheme(argument)) {
             if (options.protocolLaunch.has_value()) {
-                throw std::invalid_argument("E' possibile passare un solo URL blubox://.");
+                throw std::invalid_argument("Only one blubox:// URL can be provided.");
             }
             options.protocolLaunch = ParseBluboxUri(std::string(argument));
         } else {
-            throw std::invalid_argument("Argomento non riconosciuto: " + std::string(argument));
+            throw std::invalid_argument("Unrecognized argument: " + std::string(argument));
         }
     }
 
     if (options.registerProtocol && options.unregisterProtocol) {
-        throw std::invalid_argument("Scegliere --register-protocol oppure --unregister-protocol.");
+        throw std::invalid_argument("Choose either --register-protocol or --unregister-protocol.");
+    }
+    if ((options.uninstallClient && options.uninstallStudio) ||
+        ((options.uninstallClient || options.uninstallStudio) &&
+         (options.registerProtocol || options.unregisterProtocol || options.protocolLaunch.has_value()))) {
+        throw std::invalid_argument("Uninstall options cannot be combined with other options.");
     }
 
     return options;
@@ -65,9 +76,10 @@ LaunchOptions ParseLaunchOptions(int argc, char *argv[]) {
 void PrintUsage(const char *executableName) {
     const char *name = executableName != nullptr ? executableName : "blubox_client";
     // Keep help output simple and portable across terminals.
-    std::printf("Uso: %s [--mode=guest] [--fullscreen] [blubox://...] [--help]\n", name);
+    std::printf("Usage: %s [--mode=guest] [--fullscreen] [blubox://...] [--help]\n", name);
     std::printf("     %s --register-protocol | --unregister-protocol\n", name);
-    std::printf("La modalita' guest avvia la scena locale di test senza connessione a un server.\n");
-    std::printf("Su Windows usa --register-protocol per registrare blubox:// per l'utente corrente.\n");
-    std::printf("Controlli: WASD movimento, mouse visuale, TAB cattura/libera il mouse, F11 fullscreen, ESC esci.\n");
+    std::printf("     %s --uninstall-client | --uninstall-studio\n", name);
+    std::printf("Guest mode starts the local test scene without connecting to a server.\n");
+    std::printf("On Windows, use --register-protocol to register blubox:// for the current user.\n");
+    std::printf("Controls: WASD to move, mouse to look, TAB to capture/release the mouse, F11 for fullscreen, ESC to exit.\n");
 }

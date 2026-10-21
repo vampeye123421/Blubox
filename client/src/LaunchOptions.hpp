@@ -13,6 +13,8 @@ struct LaunchOptions {
     bool showHelp = false;
     bool registerProtocol = false;
     bool unregisterProtocol = false;
+    bool uninstallClient = false;
+    bool uninstallStudio = false;
 };
 
 LaunchOptions ParseLaunchOptions(int argc, char *argv[]);

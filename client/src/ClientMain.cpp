@@ -16,7 +16,7 @@ int main(int argc, char *argv[]) {
         GameClient client(std::move(options));
         return client.Run();
     } catch (const std::exception &error) {
-        std::cerr << "Errore: " << error.what() << '\n';
+        std::cerr << "Error: " << error.what() << '\n';
         return 1;
     }
 }
