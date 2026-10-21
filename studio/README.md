@@ -61,7 +61,7 @@ which cannot execute API routes.
 
 ## Studio sign-in
 
-Studio opens `https://bloxity-9xk2.onrender.com/auth/studio` for sign-in. On success, the website
+Studio opens `https://blubox.runs-on.dev/auth/studio` for sign-in. On success, the website
 redirects to `blubox-studio://auth?token=<URL-encoded-session-token>`. Studio validates that
 token with `GET /api/studio/session` using `Authorization: Bearer <token>`; the endpoint should
 return an authenticated `user` object with an `id` and optionally `displayName`, `display_name`,

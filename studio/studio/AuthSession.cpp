@@ -20,7 +20,7 @@
 namespace blubox::studio {
 namespace {
 
-constexpr std::string_view kLoginUrl = "https://bloxity-9xk2.onrender.com/auth/studio";
+constexpr std::string_view kLoginUrl = "https://blubox.runs-on.dev/auth/studio";
 constexpr std::string_view kEntropyText = "Blubox Studio session v1";
 constexpr std::string_view kProtocolPrefix = "blubox-studio://";
 constexpr std::string_view kBase64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
