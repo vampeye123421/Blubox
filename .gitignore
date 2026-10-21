@@ -7,3 +7,6 @@
 **/CMakeCache.txt
 **/cmake_install.cmake
 **/compile_commands.json
+
+/build-mingw-release/
+/studio-build-mingw-release/

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(BluboxStudio VERSION 0.1.5 LANGUAGES C CXX)
+project(BluboxStudio VERSION 0.1.6 LANGUAGES C CXX)
 if(WIN32)
   enable_language(RC)
 endif()
@@ -72,10 +72,12 @@ target_link_libraries(blubox_studio_ui PUBLIC raylib)
 
 add_executable(blubox_studio WIN32
   studio/main.cpp
+  studio/third_party/ImGuiColorTextEdit/TextEditor.cpp
   studio/AuthSession.cpp
   studio/Diagnostics.cpp
   studio/MapDocument.cpp
   studio/ScriptEngine.cpp
+  studio/StudioBootstrap.cpp
   studio/WebsiteApi.cpp)
 set(BLUBOX_STUDIO_ICON_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxStudioIcon.hpp")
 add_custom_command(
@@ -95,7 +97,13 @@ target_sources(blubox_studio PRIVATE "${BLUBOX_STUDIO_ICON_HEADER}")
 if(WIN32)
   target_sources(blubox_studio PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxStudioIcon.rc")
 endif()
-target_include_directories(blubox_studio PRIVATE studio "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(blubox_studio PRIVATE
+  studio
+  studio/third_party/ImGuiColorTextEdit
+  "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_definitions(blubox_studio PRIVATE
+  BLUBOX_STUDIO_VERSION="${PROJECT_VERSION}"
+  BLUBOX_STUDIO_MANIFEST_URL="https://raw.githubusercontent.com/vampeye123421/Blubox/main/studio-version.json")
 target_link_libraries(blubox_studio PRIVATE
   blubox_studio_ui
   Luau.Compiler
@@ -121,11 +129,14 @@ add_custom_command(TARGET blubox_studio POST_BUILD
     "$<TARGET_FILE_DIR:blubox_studio>/assets/editor/fonts/InterVariable.ttf"
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${STUDIO_FONT_DIR}/JetBrainsMono-Regular.ttf"
-    "$<TARGET_FILE_DIR:blubox_studio>/assets/editor/fonts/JetBrainsMono-Regular.ttf"
+    "$<TARGET_FILE_DIR:blubox_studio>/assets/editor/fonts/JetBrainsMonoRegular.ttf"
   VERBATIM)
 
 install(TARGETS blubox_studio RUNTIME DESTINATION .)
 install(FILES
   "${STUDIO_FONT_DIR}/InterVariable.ttf"
-  "${STUDIO_FONT_DIR}/JetBrainsMono-Regular.ttf"
   DESTINATION assets/editor/fonts)
+install(FILES
+  "${STUDIO_FONT_DIR}/JetBrainsMono-Regular.ttf"
+  DESTINATION assets/editor/fonts
+  RENAME JetBrainsMonoRegular.ttf)

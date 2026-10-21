@@ -2,6 +2,7 @@
 #include "AuthSession.hpp"
 #include "Diagnostics.hpp"
 #include "ScriptEngine.hpp"
+#include "StudioBootstrap.hpp"
 #include "WebsiteApi.hpp"
 #include "BluboxStudioIcon.hpp"
 
@@ -13,6 +14,7 @@
 #include <imgui_stdlib.h>
 #include <rlImGui.h>
 #include <ImGuizmo.h>
+#include "TextEditor.h"
 
 #include <algorithm>
 #include <array>
@@ -31,6 +33,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -74,10 +77,10 @@ void ApplyStudioTheme() {
     ImVec4* colors = style.Colors;
 
     // Blubox dark palette from the website's Studio sign-in and dark theme.
-    const ImVec4 background = Rgb(0x13131a);
-    const ImVec4 surface = Rgb(0x1e1e28);
-    const ImVec4 inset = Rgb(0x0c0c10);
-    const ImVec4 border = Rgb(0x2e2e3e);
+    const ImVec4 background = Rgb(0x191a1f);
+    const ImVec4 surface = Rgb(0x222328);
+    const ImVec4 inset = Rgb(0x111216);
+    const ImVec4 border = Rgb(0x34363d);
     const ImVec4 text = Rgb(0xe2e8f0);
     const ImVec4 muted = Rgb(0x94a3b8);
     const ImVec4 accent = Rgb(0x00d2ff);
@@ -91,8 +94,8 @@ void ApplyStudioTheme() {
     colors[ImGuiCol_Border] = border;
     colors[ImGuiCol_BorderShadow] = Rgb(0x000000, 0.0f);
     colors[ImGuiCol_FrameBg] = inset;
-    colors[ImGuiCol_FrameBgHovered] = Rgb(0x263944);
-    colors[ImGuiCol_FrameBgActive] = Rgb(0x304b58);
+    colors[ImGuiCol_FrameBgHovered] = Rgb(0x2c3038);
+    colors[ImGuiCol_FrameBgActive] = Rgb(0x353a44);
     colors[ImGuiCol_TitleBg] = surface;
     colors[ImGuiCol_TitleBgActive] = surface;
     colors[ImGuiCol_TitleBgCollapsed] = background;
@@ -104,23 +107,23 @@ void ApplyStudioTheme() {
     colors[ImGuiCol_CheckMark] = accent;
     colors[ImGuiCol_SliderGrab] = accent;
     colors[ImGuiCol_SliderGrabActive] = accentHover;
-    colors[ImGuiCol_Button] = Rgb(0x183844);
-    colors[ImGuiCol_ButtonHovered] = Rgb(0x20566a);
-    colors[ImGuiCol_ButtonActive] = Rgb(0x26718a);
-    colors[ImGuiCol_Header] = Rgb(0x183844);
-    colors[ImGuiCol_HeaderHovered] = Rgb(0x20566a);
-    colors[ImGuiCol_HeaderActive] = Rgb(0x26718a);
+    colors[ImGuiCol_Button] = Rgb(0x2a2c33);
+    colors[ImGuiCol_ButtonHovered] = Rgb(0x373a43);
+    colors[ImGuiCol_ButtonActive] = Rgb(0x414650);
+    colors[ImGuiCol_Header] = Rgb(0x2a2c33);
+    colors[ImGuiCol_HeaderHovered] = Rgb(0x373a43);
+    colors[ImGuiCol_HeaderActive] = Rgb(0x414650);
     colors[ImGuiCol_Separator] = border;
     colors[ImGuiCol_SeparatorHovered] = accent;
     colors[ImGuiCol_SeparatorActive] = accentHover;
     colors[ImGuiCol_ResizeGrip] = Rgb(0x00d2ff, 0.22f);
     colors[ImGuiCol_ResizeGripHovered] = Rgb(0x00d2ff, 0.68f);
     colors[ImGuiCol_ResizeGripActive] = accent;
-    colors[ImGuiCol_Tab] = background;
-    colors[ImGuiCol_TabHovered] = Rgb(0x20566a);
-    colors[ImGuiCol_TabActive] = surface;
-    colors[ImGuiCol_TabUnfocused] = background;
-    colors[ImGuiCol_TabUnfocusedActive] = surface;
+    colors[ImGuiCol_Tab] = Rgb(0x191a1f);
+    colors[ImGuiCol_TabHovered] = Rgb(0x343740);
+    colors[ImGuiCol_TabActive] = Rgb(0x292b32);
+    colors[ImGuiCol_TabUnfocused] = Rgb(0x191a1f);
+    colors[ImGuiCol_TabUnfocusedActive] = Rgb(0x25272d);
     colors[ImGuiCol_DockingPreview] = Rgb(0x00d2ff, 0.35f);
     colors[ImGuiCol_DockingEmptyBg] = background;
     colors[ImGuiCol_TableHeaderBg] = surface;
@@ -135,20 +138,20 @@ void ApplyStudioTheme() {
     colors[ImGuiCol_NavWindowingDimBg] = Rgb(0x0c0c10, 0.3f);
     colors[ImGuiCol_ModalWindowDimBg] = Rgb(0x0c0c10, 0.62f);
 
-    style.WindowPadding = ImVec2(14.0f, 12.0f);
-    style.FramePadding = ImVec2(10.0f, 7.0f);
-    style.ItemSpacing = ImVec2(10.0f, 9.0f);
+    style.WindowPadding = ImVec2(10.0f, 9.0f);
+    style.FramePadding = ImVec2(9.0f, 6.0f);
+    style.ItemSpacing = ImVec2(8.0f, 7.0f);
     style.ItemInnerSpacing = ImVec2(8.0f, 6.0f);
     style.IndentSpacing = 19.0f;
     style.ScrollbarSize = 13.0f;
     style.GrabMinSize = 12.0f;
-    style.WindowRounding = 9.0f;
-    style.ChildRounding = 8.0f;
-    style.FrameRounding = 6.0f;
-    style.PopupRounding = 9.0f;
-    style.ScrollbarRounding = 8.0f;
-    style.GrabRounding = 6.0f;
-    style.TabRounding = 7.0f;
+    style.WindowRounding = 4.0f;
+    style.ChildRounding = 3.0f;
+    style.FrameRounding = 3.0f;
+    style.PopupRounding = 4.0f;
+    style.ScrollbarRounding = 3.0f;
+    style.GrabRounding = 3.0f;
+    style.TabRounding = 4.0f;
     style.WindowBorderSize = 1.0f;
     style.ChildBorderSize = 1.0f;
     style.FrameBorderSize = 1.0f;
@@ -159,7 +162,7 @@ void LoadStudioFonts() {
     const std::filesystem::path fontDirectory =
         std::filesystem::path(GetApplicationDirectory()) / "assets" / "editor" / "fonts";
     const std::filesystem::path interfaceFont = fontDirectory / "InterVariable.ttf";
-    const std::filesystem::path codeFont = fontDirectory / "JetBrainsMono-Regular.ttf";
+    const std::filesystem::path codeFont = fontDirectory / "JetBrainsMonoRegular.ttf";
 
     ImGuiIO& io = ImGui::GetIO();
     if (ImFont* font = io.Fonts->AddFontFromFileTTF(interfaceFont.string().c_str(), 16.0f)) {
@@ -169,6 +172,57 @@ void LoadStudioFonts() {
                  interfaceFont.string().c_str());
     }
     g_codeFont = io.Fonts->AddFontFromFileTTF(codeFont.string().c_str(), 15.0f);
+}
+
+const TextEditor::Palette& LuauEditorPalette() {
+    static const TextEditor::Palette palette = [] {
+        TextEditor::Palette value = TextEditor::GetDarkPalette();
+        const auto set = [&](TextEditor::PaletteIndex index, ImU32 color) {
+            value[static_cast<std::size_t>(index)] = color;
+        };
+        set(TextEditor::PaletteIndex::Default, IM_COL32(220, 225, 234, 255));
+        set(TextEditor::PaletteIndex::Keyword, IM_COL32(255, 121, 151, 255));
+        set(TextEditor::PaletteIndex::Number, IM_COL32(255, 168, 112, 255));
+        set(TextEditor::PaletteIndex::String, IM_COL32(158, 206, 106, 255));
+        set(TextEditor::PaletteIndex::CharLiteral, IM_COL32(158, 206, 106, 255));
+        set(TextEditor::PaletteIndex::Punctuation, IM_COL32(178, 187, 211, 255));
+        set(TextEditor::PaletteIndex::Identifier, IM_COL32(220, 225, 234, 255));
+        set(TextEditor::PaletteIndex::KnownIdentifier, IM_COL32(125, 207, 255, 255));
+        set(TextEditor::PaletteIndex::Comment, IM_COL32(112, 122, 143, 255));
+        set(TextEditor::PaletteIndex::MultiLineComment, IM_COL32(112, 122, 143, 255));
+        set(TextEditor::PaletteIndex::Background, IM_COL32(15, 16, 20, 255));
+        set(TextEditor::PaletteIndex::Cursor, IM_COL32(0, 210, 255, 255));
+        set(TextEditor::PaletteIndex::Selection, IM_COL32(0, 134, 164, 120));
+        set(TextEditor::PaletteIndex::LineNumber, IM_COL32(105, 112, 128, 255));
+        set(TextEditor::PaletteIndex::CurrentLineFill, IM_COL32(34, 36, 43, 255));
+        set(TextEditor::PaletteIndex::CurrentLineFillInactive, IM_COL32(29, 30, 36, 255));
+        set(TextEditor::PaletteIndex::CurrentLineEdge, IM_COL32(49, 53, 64, 255));
+        return value;
+    }();
+    return palette;
+}
+
+TextEditor::LanguageDefinition LuauLanguage() {
+    TextEditor::LanguageDefinition language = TextEditor::LanguageDefinition::Lua();
+    language.mName = "Luau";
+    language.mKeywords.insert("continue");
+    language.mKeywords.insert("export");
+    language.mKeywords.insert("type");
+    language.mKeywords.insert("typeof");
+    for (const char* name : {
+             "game", "workspace", "script", "task", "shared", "plugin",
+             "Vector3", "Vector2", "CFrame", "Color3", "UDim2", "Instance",
+             "Players", "Lighting", "Workspace", "ReplicatedStorage", "ServerStorage",
+             "ServerScriptService", "StarterPlayer", "StarterGui", "RunService",
+             "GetService", "WaitForChild", "FindFirstChild", "GetChildren", "Clone",
+             "Destroy", "Connect", "Disconnect", "onTick", "onTouch", "onUntouch",
+             "getPosition", "setPosition", "getRotation", "setRotation", "setColor",
+             "setVisible", "applyForce", "applyImpulse", "broadcast", "spawnEntity",
+             "destroyEntity", "findEntitiesInRadius", "getEntity", "getTime"}) {
+        language.mIdentifiers.insert_or_assign(name,
+            TextEditor::Identifier{TextEditor::Coordinates::Invalid(), "Blubox Luau API"});
+    }
+    return language;
 }
 
 struct SessionValidation {
@@ -211,12 +265,16 @@ struct StudioState {
     std::string status = "Ready";
     std::string lastReportedScriptError;
     std::vector<OutputEntry> output;
+    std::vector<std::string> openScriptIds;
+    std::unordered_map<std::string, std::unique_ptr<TextEditor>> scriptEditors;
+    std::string focusScriptId;
+    std::string activeRibbonTab = "Home";
+    ImGuiID centralDockNode = 0;
     std::filesystem::path currentFilePath;
     bool statusIsError = false;
     bool dirty = false;
     bool showExplorer = true;
     bool showProperties = true;
-    bool showScriptEditor = true;
     bool showViewport = true;
     bool showOutput = true;
     bool showCloudPanel = false;
@@ -270,14 +328,18 @@ void AddEditorObject(StudioState& state, const std::string& kind, std::string pa
         if (kind == "block" || kind == "sphere") {
             object.transform.position = {0.0f, 1.0f, 0.0f};
         } else if (kind == "script" || kind == "localscript") {
-            object.luauScript = "-- Runs in Blubox Studio's local Luau preview.\n"
-                                "-- Example: body.onTick(function(deltaTime)\n"
-                                "--     -- Update this object here.\n"
-                                "-- end)\n";
+            object.luauScript = "-- Runs in the Luau preview. Press Run to start.\n"
+                                "local elapsed = 0\n\n"
+                                "body.onTick(function(deltaTime)\n"
+                                "    elapsed += deltaTime\n"
+                                "    if elapsed >= 1 then\n"
+                                "        game.broadcast(\"Hello from Blubox!\")\n"
+                                "        elapsed = 0\n"
+                                "    end\n"
+                                "end)\n";
         }
         state.selectedEntity = static_cast<int>(state.map.entities.size() - 1);
         state.selectedService.clear();
-        state.showScriptEditor = true;
         state.showExplorer = true;
         state.dirty = true;
         AppendOutput(state, "INFO", "Created " + object.name + " in " + parent + ".");
@@ -324,6 +386,18 @@ std::optional<std::filesystem::path> ChooseMapPath(bool save) {
 }
 
 bool SaveMap(StudioState& state, bool choosePath) {
+    if (!choosePath && state.authenticated && !state.websiteToken.empty()) {
+        std::string error;
+        if (!state.api.PublishMap(state.map, state.websiteToken, error)) {
+            SetStatus(state, "Cloud save failed: " + error, true);
+            return false;
+        }
+        state.cloudWorldId = state.map.worldId;
+        state.dirty = false;
+        SetStatus(state, "Saved to Blubox Cloud.");
+        return true;
+    }
+
     std::filesystem::path path = state.currentFilePath;
     if (choosePath || path.empty()) {
         auto selected = ChooseMapPath(true);
@@ -356,6 +430,8 @@ void OpenMap(StudioState& state) {
         input >> json;
         MapDocument opened = MapDocument::FromJson(json);
         state.map = std::move(opened);
+        state.openScriptIds.clear();
+        state.scriptEditors.clear();
         state.currentFilePath = *selected;
         state.cloudWorldId = state.map.worldId;
         state.selectedEntity = -1;
@@ -371,6 +447,8 @@ void OpenMap(StudioState& state) {
 void NewMap(StudioState& state) {
     try {
         state.map = MapDocument::Create("Untitled World");
+        state.openScriptIds.clear();
+        state.scriptEditors.clear();
         state.currentFilePath.clear();
         state.cloudWorldId.clear();
         state.selectedEntity = -1;
@@ -565,6 +643,8 @@ void Logout(StudioState& state) {
     }
     state.scripts.reset();
     state.map = MapDocument::Create("My First World");
+    state.openScriptIds.clear();
+    state.scriptEditors.clear();
     state.selectedEntity = -1;
     state.selectedService.clear();
     state.cloudWorldId.clear();
@@ -664,8 +744,8 @@ void DrawTopBar(StudioState& state) {
         if (ImGui::MenuItem("New world", "Ctrl+N")) state.pendingNewMap = true;
         if (ImGui::MenuItem("Open...", "Ctrl+O")) state.pendingOpenMap = true;
         ImGui::Separator();
-        if (ImGui::MenuItem("Save", "Ctrl+S")) SaveMap(state, false);
-        if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) SaveMap(state, true);
+        if (ImGui::MenuItem(state.authenticated ? "Save to Blubox" : "Save", "Ctrl+S")) SaveMap(state, false);
+        if (ImGui::MenuItem("Save a local copy...", "Ctrl+Shift+S")) SaveMap(state, true);
         ImGui::Separator();
         if (ImGui::MenuItem("Publish to Website...")) {
             state.publishTitle = state.map.name;
@@ -681,7 +761,6 @@ void DrawTopBar(StudioState& state) {
         ImGui::MenuItem("Explorer", nullptr, &state.showExplorer);
         ImGui::MenuItem("Properties", nullptr, &state.showProperties);
         ImGui::MenuItem("Viewport", nullptr, &state.showViewport);
-        ImGui::MenuItem("Luau Script", nullptr, &state.showScriptEditor);
         ImGui::MenuItem("Output", nullptr, &state.showOutput);
         ImGui::Separator();
         ImGui::MenuItem("World settings", nullptr, &state.showWorldPanel);
@@ -693,7 +772,7 @@ void DrawTopBar(StudioState& state) {
         if (ImGui::MenuItem("Sphere")) AddEditorObject(state, "sphere", "Workspace");
         ImGui::EndMenu();
     }
-    if (ImGui::Button("Save")) SaveMap(state, false);
+    if (ImGui::Button(state.authenticated ? "Save to Blubox" : "Save")) SaveMap(state, false);
     if (ImGui::Button("Publish")) {
         state.publishTitle = state.map.name;
         state.publishDescription.clear();
@@ -714,29 +793,132 @@ void DrawTopBar(StudioState& state) {
     ImGui::EndMainMenuBar();
 }
 
-void SetupDefaultDockLayout() {
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const ImGuiID dockspaceId = ImGui::GetID("BluboxStudioDockspace");
-    if (ImGui::DockBuilderGetNode(dockspaceId) != nullptr) return;
+void SetupDefaultDockLayout(StudioState& state, const ImVec2& size) {
+    const ImGuiID dockspaceId = ImGui::GetID("BluboxStudioDockspaceV2");
+    if (ImGui::DockBuilderGetNode(dockspaceId) != nullptr) {
+        if (ImGuiWindow* viewportWindow = ImGui::FindWindowByName("Viewport")) {
+            state.centralDockNode = viewportWindow->DockId;
+        }
+        return;
+    }
     ImGui::DockBuilderRemoveNode(dockspaceId);
     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockspaceId, viewport->WorkSize);
+    ImGui::DockBuilderSetNodeSize(dockspaceId, size);
     ImGuiID center = dockspaceId;
-    ImGuiID left = 0;
     ImGuiID right = 0;
-    ImGuiID lower = 0;
-    ImGuiID scriptPane = 0;
+    ImGuiID properties = 0;
     ImGuiID outputPane = 0;
-    ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, &left, &center);
-    ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, &right, &center);
-    ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.27f, &lower, &center);
-    ImGui::DockBuilderSplitNode(lower, ImGuiDir_Right, 0.42f, &outputPane, &scriptPane);
-    ImGui::DockBuilderDockWindow("Explorer", left);
-    ImGui::DockBuilderDockWindow("Properties", right);
+    ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.24f, &right, &center);
+    ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.48f, &properties, &right);
+    ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.22f, &outputPane, &center);
+    ImGui::DockBuilderDockWindow("Explorer", right);
+    ImGui::DockBuilderDockWindow("Properties", properties);
     ImGui::DockBuilderDockWindow("Viewport", center);
-    ImGui::DockBuilderDockWindow("Luau Script", scriptPane);
     ImGui::DockBuilderDockWindow("Output", outputPane);
     ImGui::DockBuilderFinish(dockspaceId);
+    state.centralDockNode = center;
+}
+
+bool IsScriptObject(const Entity& entity);
+
+void RunSelectedScript(StudioState& state) {
+    if (state.selectedEntity < 0 || state.selectedEntity >= static_cast<int>(state.map.entities.size())) {
+        SetStatus(state, "Select a Script or LocalScript in Explorer first.", true);
+        return;
+    }
+    Entity& entity = state.map.entities[static_cast<std::size_t>(state.selectedEntity)];
+    if (!IsScriptObject(entity)) {
+        SetStatus(state, "Select a Script or LocalScript in Explorer first.", true);
+        return;
+    }
+    std::string error;
+    if (state.scripts && state.scripts->RunEntity(entity.id, error)) {
+        const std::string message = entity.kind == "localscript"
+            ? "LocalScript running in the editor preview sandbox."
+            : "Script running in the editor preview sandbox.";
+        AppendOutput(state, "INFO", message);
+        SetStatus(state, message);
+    } else SetStatus(state, error.empty() ? "The Luau preview is not ready." : error, true);
+}
+
+void DrawRibbon(StudioState& state) {
+    const char* tabs[] = {"Home", "Model", "Script", "Test", "View"};
+    for (const char* tab : tabs) {
+        if (state.activeRibbonTab == tab) {
+            ImGui::PushStyleColor(ImGuiCol_Button, Rgb(0x2b333d));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, Rgb(0x343d48));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, Rgb(0x414b58));
+        }
+        if (ImGui::Button(tab, ImVec2(74.0f, 28.0f))) state.activeRibbonTab = tab;
+        if (state.activeRibbonTab == tab) ImGui::PopStyleColor(3);
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    const auto tool = [&](const char* label, ImGuizmo::OPERATION operation, const char* hint) {
+        if (ImGui::Button(label, ImVec2(72.0f, 32.0f))) {
+            state.gizmoOperation = operation;
+            SetStatus(state, std::string(label) + " tool selected (" + hint + ").");
+        }
+        ImGui::SameLine();
+    };
+    if (state.activeRibbonTab == "Home" || state.activeRibbonTab == "Model") {
+        tool("Select", state.gizmoOperation, "click an object");
+        tool("Move  W", ImGuizmo::TRANSLATE, "W");
+        tool("Scale  R", ImGuizmo::SCALE, "R");
+        tool("Rotate  E", ImGuizmo::ROTATE, "E");
+        ImGui::SameLine(0.0f, 12.0f);
+        if (ImGui::Button("Part", ImVec2(72.0f, 32.0f))) AddEditorObject(state, "block", "Workspace");
+        ImGui::SameLine();
+        if (ImGui::Button("Script", ImVec2(78.0f, 32.0f))) AddEditorObject(state, "script", "Workspace");
+        ImGui::SameLine();
+        if (ImGui::Button("LocalScript", ImVec2(98.0f, 32.0f))) AddEditorObject(state, "localscript", "StarterPlayer");
+        ImGui::SameLine(0.0f, 14.0f);
+        if (ImGui::Button("Explorer", ImVec2(82.0f, 32.0f))) state.showExplorer = !state.showExplorer;
+        ImGui::SameLine();
+        if (ImGui::Button("Properties", ImVec2(92.0f, 32.0f))) state.showProperties = !state.showProperties;
+    } else if (state.activeRibbonTab == "Script" || state.activeRibbonTab == "Test") {
+        if (ImGui::Button("Run selected script", ImVec2(154.0f, 32.0f))) RunSelectedScript(state);
+        ImGui::SameLine();
+        if (ImGui::Button("Stop selected script", ImVec2(158.0f, 32.0f))) {
+            if (state.selectedEntity >= 0 && state.selectedEntity < static_cast<int>(state.map.entities.size())) {
+                state.scripts->StopEntity(state.map.entities[static_cast<std::size_t>(state.selectedEntity)].id);
+                SetStatus(state, "Selected script stopped.");
+            } else SetStatus(state, "Select a script to stop it.", true);
+        }
+        ImGui::SameLine(0.0f, 14.0f);
+        ImGui::TextDisabled("Scripts use the embedded Luau compiler and local preview sandbox.");
+    } else {
+        if (ImGui::Button("Viewport", ImVec2(88.0f, 32.0f))) state.showViewport = !state.showViewport;
+        ImGui::SameLine();
+        if (ImGui::Button("Explorer", ImVec2(82.0f, 32.0f))) state.showExplorer = !state.showExplorer;
+        ImGui::SameLine();
+        if (ImGui::Button("Properties", ImVec2(92.0f, 32.0f))) state.showProperties = !state.showProperties;
+        ImGui::SameLine();
+        if (ImGui::Button("Output", ImVec2(74.0f, 32.0f))) state.showOutput = !state.showOutput;
+    }
+    ImGui::NewLine();
+    ImGui::Separator();
+}
+
+void BeginStudioWorkspace(StudioState& state) {
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::Begin("##BluboxStudioWorkspace", nullptr, flags);
+    ImGui::PopStyleVar();
+    DrawRibbon(state);
+    const ImVec2 dockSize = ImGui::GetContentRegionAvail();
+    SetupDefaultDockLayout(state, dockSize);
+    ImGui::DockSpace(ImGui::GetID("BluboxStudioDockspaceV2"), dockSize);
 }
 
 void DrawLoginModal(StudioState& state) {
@@ -888,6 +1070,24 @@ bool IsScriptObject(const Entity& entity) {
     return entity.kind == "script" || entity.kind == "localscript";
 }
 
+void OpenScriptEditor(StudioState& state, const std::string& entityId) {
+    const auto entity = std::find_if(state.map.entities.begin(), state.map.entities.end(),
+        [&](const Entity& item) { return item.id == entityId; });
+    if (entity == state.map.entities.end() || !IsScriptObject(*entity)) return;
+    if (std::find(state.openScriptIds.begin(), state.openScriptIds.end(), entityId) == state.openScriptIds.end()) {
+        state.openScriptIds.push_back(entityId);
+    }
+    auto& editor = state.scriptEditors[entityId];
+    if (!editor) {
+        editor = std::make_unique<TextEditor>();
+        editor->SetLanguageDefinition(LuauLanguage());
+        editor->SetPalette(LuauEditorPalette());
+        editor->SetTabSize(4);
+        editor->SetText(entity->luauScript);
+    }
+    state.focusScriptId = entityId;
+}
+
 void DrawAddMenu(StudioState& state, const std::string& parent, bool allowGeometry,
                  bool allowScript, bool allowLocalScript, bool allowGui = false) {
     ImGui::PushID(parent.c_str());
@@ -910,9 +1110,6 @@ void SelectHierarchyItem(StudioState& state, std::size_t index) {
     state.selectedEntity = static_cast<int>(index);
     state.selectedService.clear();
     state.showProperties = true;
-    if (IsScriptObject(state.map.entities[index]) || !state.map.entities[index].luauScript.empty()) {
-        state.showScriptEditor = true;
-    }
 }
 
 void DrawEntityTree(StudioState& state, const std::string& parent) {
@@ -924,6 +1121,10 @@ void DrawEntityTree(StudioState& state, const std::string& parent) {
         const std::string kind = entity.kind;
         const bool scriptObject = IsScriptObject(entity);
         ImGui::PushID(id.c_str());
+        if (scriptObject) {
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                kind == "localscript" ? Rgb(0x55c7a5) : Rgb(0xe7ad62));
+        }
         const bool hasChildren = std::any_of(state.map.entities.begin(), state.map.entities.end(),
             [&](const Entity& child) { return child.parent == id; });
         bool open = false;
@@ -934,6 +1135,10 @@ void DrawEntityTree(StudioState& state, const std::string& parent) {
             open = ImGui::TreeNodeEx(label.c_str(), ImGuiTreeNodeFlags_OpenOnArrow |
                 (state.selectedEntity == static_cast<int>(i) ? ImGuiTreeNodeFlags_Selected : 0));
             if (ImGui::IsItemClicked()) SelectHierarchyItem(state, i);
+            if (scriptObject && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                SelectHierarchyItem(state, i);
+                OpenScriptEditor(state, id);
+            }
         } else {
             const std::string label = scriptObject
                 ? name + "  [" + (kind == "localscript" ? "LocalScript" : "Script") + "]"
@@ -941,7 +1146,12 @@ void DrawEntityTree(StudioState& state, const std::string& parent) {
             if (ImGui::Selectable(label.c_str(), state.selectedEntity == static_cast<int>(i))) {
                 SelectHierarchyItem(state, i);
             }
+            if (scriptObject && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                SelectHierarchyItem(state, i);
+                OpenScriptEditor(state, id);
+            }
         }
+        if (scriptObject) ImGui::PopStyleColor();
         if (!scriptObject) {
             ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - 38.0f));
             DrawAddMenu(state, id, false, true, false, kind == "screengui" || kind == "frame");
@@ -1095,6 +1305,8 @@ void DrawInspector(StudioState& state) {
         std::erase_if(state.map.entities, [&](const Entity& candidate) {
             return candidate.id == deletedId || candidate.parent == deletedId;
         });
+        std::erase(state.openScriptIds, deletedId);
+        state.scriptEditors.erase(deletedId);
         state.selectedEntity = -1;
         state.selectedService.clear();
         state.dirty = true;
@@ -1104,55 +1316,82 @@ void DrawInspector(StudioState& state) {
 }
 
 void DrawScriptPanel(StudioState& state) {
-    if (!ImGui::Begin("Luau Script", &state.showScriptEditor)) { ImGui::End(); return; }
-    if (state.selectedEntity < 0 || state.selectedEntity >= static_cast<int>(state.map.entities.size())) {
-        ImGui::TextDisabled("Select a Script or LocalScript in Explorer, or add one with +.");
-        ImGui::End();
-        return;
-    }
-    Entity& entity = state.map.entities[static_cast<std::size_t>(state.selectedEntity)];
-    if (!IsScriptObject(entity) && entity.luauScript.empty()) {
-        ImGui::TextDisabled("This part has no script yet. Use its + menu in Explorer to add a Script.");
-        ImGui::End();
-        return;
-    }
-    ImGui::TextDisabled("SCRIPT  /  %s", entity.name.c_str());
-    ImGui::SameLine();
-    ImGui::TextDisabled("%zu / 262144 bytes", entity.luauScript.size());
-    if (entity.kind == "localscript") {
-        ImGui::TextWrapped("LocalScript source is saved here and can be previewed in the editor sandbox. A separate client runtime and player replication are not implemented yet.");
-    } else {
-        ImGui::TextWrapped("Runs in the local Luau preview sandbox. Source is stored in the .blubox map.");
-    }
-    ImGui::PushItemWidth(-1.0f);
-    const float editorHeight = std::max(120.0f, ImGui::GetContentRegionAvail().y - 72.0f);
-    if (g_codeFont) ImGui::PushFont(g_codeFont);
-    const bool changed = ImGui::InputTextMultiline("##LuauSource", &entity.luauScript,
-        ImVec2(-1.0f, editorHeight), ImGuiInputTextFlags_AllowTabInput);
-    if (g_codeFont) ImGui::PopFont();
-    ImGui::PopItemWidth();
-    if (changed) state.dirty = true;
-    if (changed && state.scripts) state.scripts->StopEntity(entity.id);
-    if (ImGui::Button("Run / Apply", ImVec2(120, 0))) {
-        std::string error;
-        if (state.scripts->RunEntity(entity.id, error)) {
-            const std::string message = entity.kind == "localscript"
-                ? "LocalScript running in the editor preview sandbox."
-                : "Script running in the editor preview sandbox.";
-            AppendOutput(state, "INFO", message);
-            SetStatus(state, message);
+    // Called once for every open script document. Dock tabs are the document
+    // tabs, so each script shares the main workspace with the Viewport.
+    const std::vector<std::string> openIds = state.openScriptIds;
+    for (const std::string& id : openIds) {
+        auto entity = std::find_if(state.map.entities.begin(), state.map.entities.end(),
+            [&](const Entity& item) { return item.id == id; });
+        if (entity == state.map.entities.end() || !IsScriptObject(*entity)) {
+            std::erase(state.openScriptIds, id);
+            state.scriptEditors.erase(id);
+            continue;
         }
-        else SetStatus(state, error, true);
+
+        auto& editor = state.scriptEditors[id];
+        if (!editor) {
+            editor = std::make_unique<TextEditor>();
+            editor->SetLanguageDefinition(LuauLanguage());
+            editor->SetPalette(LuauEditorPalette());
+            editor->SetTabSize(4);
+            editor->SetText(entity->luauScript);
+        }
+
+        const std::string type = entity->kind == "localscript" ? "LocalScript" : "Script";
+        const std::string title = type + " - " + entity->name + "###ScriptEditor_" + id;
+        bool open = true;
+        if (state.centralDockNode != 0) ImGui::SetNextWindowDockID(state.centralDockNode, ImGuiCond_FirstUseEver);
+        if (state.focusScriptId == id) {
+            ImGui::SetNextWindowFocus();
+            state.focusScriptId.clear();
+        }
+        const bool visible = ImGui::Begin(title.c_str(), &open);
+        if (visible) {
+            ImGui::TextColored(entity->kind == "localscript" ? Rgb(0x55c7a5) : Rgb(0xe7ad62),
+                "%s", type.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s  ·  %zu / 262144 bytes", entity->parent.c_str(), entity->luauScript.size());
+            ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - 230.0f));
+            if (ImGui::Button("Run", ImVec2(64.0f, 28.0f))) {
+                std::string error;
+                if (state.scripts && state.scripts->RunEntity(entity->id, error)) {
+                    const std::string message = entity->kind == "localscript"
+                        ? "LocalScript running in the editor preview sandbox."
+                        : "Script running in the editor preview sandbox.";
+                    AppendOutput(state, "INFO", message);
+                    SetStatus(state, message);
+                } else SetStatus(state, error.empty() ? "The Luau preview is not ready." : error, true);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Stop", ImVec2(64.0f, 28.0f))) {
+                if (state.scripts) state.scripts->StopEntity(entity->id);
+                SetStatus(state, "Script stopped.");
+            }
+            ImGui::Separator();
+            const ImVec2 editorSize(0.0f, std::max(120.0f, ImGui::GetContentRegionAvail().y));
+            if (g_codeFont) ImGui::PushFont(g_codeFont);
+            editor->Render("##LuauSource", editorSize, false);
+            if (g_codeFont) ImGui::PopFont();
+            if (editor->IsTextChanged()) {
+                entity->luauScript = editor->GetText();
+                state.dirty = true;
+                if (state.scripts) state.scripts->StopEntity(entity->id);
+            }
+            if (state.scripts && !state.scripts->lastRuntimeError().empty()) {
+                ImGui::TextColored(StatusColor(true), "%s", state.scripts->lastRuntimeError().c_str());
+            }
+            const TextEditor::Coordinates cursor = editor->GetCursorPosition();
+            ImGui::Separator();
+            ImGui::TextDisabled("Luau  ·  %d lines", editor->GetTotalLines());
+            ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - 120.0f));
+            ImGui::TextDisabled("Ln %d, Col %d", cursor.mLine + 1, cursor.mColumn + 1);
+        }
+        ImGui::End();
+        if (!open) {
+            std::erase(state.openScriptIds, id);
+            state.scriptEditors.erase(id);
+        }
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Stop", ImVec2(80, 0))) {
-        state.scripts->StopEntity(entity.id);
-        SetStatus(state, "Luau script stopped.");
-    }
-    if (!state.scripts->lastRuntimeError().empty()) {
-        ImGui::TextColored(StatusColor(true), "%s", state.scripts->lastRuntimeError().c_str());
-    }
-    ImGui::End();
 }
 
 std::array<float, 16> ToColumnMajor(const Matrix& matrix) {
@@ -1340,10 +1579,6 @@ void DrawViewport(StudioState& state) {
             state.map.entities[static_cast<std::size_t>(state.selectedEntity)].kind != "frame" &&
             state.map.entities[static_cast<std::size_t>(state.selectedEntity)].kind != "textlabel" &&
             state.map.entities[static_cast<std::size_t>(state.selectedEntity)].kind != "textbutton") {
-            // The viewport Image is a regular ImGui item. ImGuizmo refuses to
-            // begin a drag while any item is hovered, so release that item's
-            // hover ownership while preserving the viewport hit-test above.
-            ImGui::SetHoveredID(0);
             ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
             ImGuizmo::SetRect(imageMin.x, imageMin.y, imageSize.x, imageSize.y);
             ImGuizmo::SetOrthographic(false);
@@ -1395,11 +1630,12 @@ void DrawViewport(StudioState& state) {
 
 void DrawCloudPanel(StudioState& state) {
     if (!ImGui::Begin("Blubox Cloud", &state.showCloudPanel)) { ImGui::End(); return; }
-    ImGui::TextWrapped("Cloud actions are optional. Build first, then use Publish in the top bar. Local files are managed in File > Open and File > Save.");
+    ImGui::TextWrapped("Save your signed-in world to your Blubox account, or publish it for review. Use File > Save a local copy to keep a .blubox file on this PC.");
     ImGui::TextDisabled("Website API: %s", state.api.baseUrl().c_str());
     ImGui::Text("Account: %s", state.displayName.c_str());
     ImGui::InputText("World ID", &state.cloudWorldId);
     ImGui::TextDisabled("The website session is managed by Studio and never included in map data.");
+    if (ImGui::Button("Save map to website", ImVec2(-1, 0))) SaveMap(state, false);
     if (ImGui::Button("Publish game...", ImVec2(-1, 0))) {
         state.publishTitle = state.map.name;
         state.publishDescription.clear();
@@ -1411,6 +1647,8 @@ void DrawCloudPanel(StudioState& state) {
         std::string error;
         if (state.api.DownloadMap(state.cloudWorldId, state.websiteToken, downloaded, error)) {
             state.map = std::move(downloaded);
+            state.openScriptIds.clear();
+            state.scriptEditors.clear();
             state.cloudWorldId = state.map.worldId;
             state.selectedEntity = -1;
             state.selectedService.clear();
@@ -1431,6 +1669,8 @@ void DrawWorldPanel(StudioState& state) {
     if (ImGui::Button("Create world", ImVec2(-1, 0))) {
         try {
             state.map = MapDocument::Create(state.newMapName);
+            state.openScriptIds.clear();
+            state.scriptEditors.clear();
             state.cloudWorldId.clear();
             state.selectedEntity = -1;
             state.selectedService.clear();
@@ -1539,26 +1779,25 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
         ClearBackground(Color{19, 19, 26, 255});
         if (state.authenticated && state.projectOpen) DrawWorld(state);
         rlImGuiBegin();
-        ImGuizmo::BeginFrame();
         if (!state.authenticated) {
             DrawLoginModal(state);
         } else if (state.projectOpen) {
-            SetupDefaultDockLayout();
-            ImGui::DockSpaceOverViewport(ImGui::GetID("BluboxStudioDockspace"), ImGui::GetMainViewport());
             HandleShortcuts(state);
             DrawTopBar(state);
+            BeginStudioWorkspace(state);
             DrawNewMapConfirmation(state);
             DrawOpenMapConfirmation(state);
             DrawPublishDialog(state);
             if (state.authenticated && state.projectOpen) {
                 if (state.showExplorer) DrawHierarchy(state);
                 if (state.showProperties) DrawInspector(state);
-                if (state.showScriptEditor) DrawScriptPanel(state);
                 if (state.showViewport) DrawViewport(state);
+                DrawScriptPanel(state);
                 if (state.showOutput) DrawOutput(state);
                 if (state.showWorldPanel) DrawWorldPanel(state);
                 if (state.showCloudPanel) DrawCloudPanel(state);
             } else DrawLoginModal(state);
+            ImGui::End(); // workspace host
         }
         rlImGuiEnd();
         EndDrawing();
@@ -1576,6 +1815,8 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (TryRunStudioUpdate(argc, argv)) return 0;
+
     std::string startupToken;
     std::string startupLinkError;
     bool debugConsole = false;

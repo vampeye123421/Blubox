@@ -19,6 +19,7 @@ their own licenses and are not covered here.
 - **Mbed TLS**: HTTPS for the games' web requests (HTTP). https://www.trustedfirmware.org/projects/mbed-tls/
 - **SQLite**: Where a dedicated server keeps its game's saves. https://www.sqlite.org
 - **Dear ImGui**: The editor's interface. https://github.com/ocornut/imgui
+- **ImGuiColorTextEdit**: Syntax-colored Luau editor. https://github.com/BalazsJako/ImGuiColorTextEdit (MIT; see `studio/third_party/ImGuiColorTextEdit/LICENSE`)
 - **rlImGui**: Dear ImGui on raylib. https://github.com/raylib-extras/rlImGui
 - **ImGuizmo**: The editor's move, rotate and scale gizmos. https://github.com/CedricGuillemet/ImGuizmo
 - **Luau**: Embedded sandboxed scripting language and VM. https://github.com/luau-lang/luau

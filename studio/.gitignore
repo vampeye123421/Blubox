@@ -1,6 +1,7 @@
 # Local builds and CMake dependencies
 build/
 build-*/
+dist/
 .deps/
 .cache/
 

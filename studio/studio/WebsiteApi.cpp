@@ -166,7 +166,7 @@ bool WebsiteApi::PublishMap(const MapDocument& document, std::string_view access
                                           accessToken, document.ToJson().dump());
         if (result.status < 200 || result.status >= 300) {
             if (result.status == 404) {
-                throw std::runtime_error("The Blubox Studio API route was not found (HTTP 404). Update Blubox Studio and try again.");
+                throw std::runtime_error("Studio API route is missing (HTTP 404). Redeploy the Blubox website mailer service to enable Studio publishing.");
             }
             std::string detail;
             try {

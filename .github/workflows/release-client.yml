@@ -15,7 +15,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Set up portable MinGW toolchain
+      - name: Set up MinGW toolchain
         uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -25,127 +25,64 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-make
 
-      - name: Configure
-        shell: msys2 {0}
-        run: cmake -S client -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
 
-      - name: Build client and launchers
-        shell: msys2 {0}
-        run: cmake --build build --config Release -- -j2
-
-      - name: Configure Blubox Studio
-        shell: msys2 {0}
-        run: cmake -S studio -B studio-build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build Blubox Studio
-        shell: msys2 {0}
-        run: cmake --build studio-build --config Release --target blubox_studio -- -j2
-
-      - name: Read release versions and stage installer inputs
-        id: versions
+      - name: Build apps and installers
         shell: pwsh
         run: |
-          $client = (Get-Content client/version.json -Raw | ConvertFrom-Json).version
-          $studioProject = Get-Content studio/CMakeLists.txt -Raw
-          if ($studioProject -notmatch 'project\(BluboxStudio VERSION ([0-9]+(?:\.[0-9]+){1,3})') { throw 'Studio version not found.' }
-          $studio = $Matches[1]
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          ./studio/tools/release/Build-Release.ps1 -ClientRoot ./client -ClientBuildDir ./build -StudioBuildDir ./studio-build -AppVersion $version
+
+      - name: Compute checksums
+        id: checksums
+        shell: pwsh
+        run: |
+          $stage = 'studio/dist/release_staging'
+          $client = (Get-FileHash "$stage/BluboxClient.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $studio = (Get-FileHash "$stage/BluboxStudio.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $font = (Get-FileHash "$stage/assets/editor/fonts/InterVariable.ttf" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $codeFont = (Get-FileHash "$stage/assets/editor/fonts/JetBrainsMonoRegular.ttf" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $setup = (Get-FileHash "studio/dist/Blubox-Setup-$version.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
           "client=$client" >> $env:GITHUB_OUTPUT
           "studio=$studio" >> $env:GITHUB_OUTPUT
-          $stage = 'dist/release_staging'
-          New-Item -ItemType Directory -Force -Path "$stage/assets/editor/fonts", "$stage/licenses/client", 'dist/child-installers' | Out-Null
-          Copy-Item build/blubox_launcher.exe "$stage/BluboxClient.exe"
-          Copy-Item build/blubox_studio_launcher.exe "$stage/BluboxStudio.exe"
-          Copy-Item studio/assets/editor/fonts/InterVariable.ttf "$stage/assets/editor/fonts/InterVariable.ttf"
-          Copy-Item studio/assets/editor/fonts/JetBrainsMono-Regular.ttf "$stage/assets/editor/fonts/JetBrainsMonoRegular.ttf"
-          Copy-Item studio/assets/editor/fonts/Inter-LICENSE.txt "$stage/licenses/Inter-LICENSE.txt"
-          Copy-Item studio/assets/editor/fonts/JetBrainsMono-LICENSE.txt "$stage/licenses/JetBrainsMono-LICENSE.txt"
-          Copy-Item studio/THIRD_PARTY_LICENSES.md "$stage/licenses/THIRD_PARTY_LICENSES.md"
-          Copy-Item studio/LICENSE "$stage/licenses/BluboxStudio-LICENSE.txt"
-          Copy-Item client/assets/fonts/OFL.txt "$stage/licenses/client/Lato-OFL.txt"
-
-      - name: Build standalone and combined installers
-        shell: pwsh
-        run: |
-          $iscc = @(
-            'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
-            'C:\Program Files\Inno Setup 6\ISCC.exe',
-            'C:\Program Files (x86)\Inno Setup 7\ISCC.exe',
-            'C:\Program Files\Inno Setup 7\ISCC.exe'
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) {
-            choco install innosetup --yes --no-progress
-            $iscc = @('C:\Program Files (x86)\Inno Setup 6\ISCC.exe', 'C:\Program Files (x86)\Inno Setup 7\ISCC.exe') | Where-Object { Test-Path $_ } | Select-Object -First 1
-          }
-          if (-not $iscc) { throw 'Inno Setup compiler was not found.' }
-          $client = '${{ steps.versions.outputs.client }}'
-          $studio = '${{ steps.versions.outputs.studio }}'
-          foreach ($mode in @('Client', 'Studio', 'Bundle')) {
-            & $iscc '/Qp' "/DAppVersion=$client" "/DClientVersion=$client" "/DStudioVersion=$studio" "/DProductMode=$mode" 'installer/blubox_installer.iss'
-            if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $mode with exit code $LASTEXITCODE" }
-          }
-          Copy-Item "dist/Blubox-Setup-$client.exe" 'dist/Blubox-Setup.exe'
-
-      - name: Compute client checksum
-        id: checksum
-        shell: pwsh
-        run: |
-          $hash = (Get-FileHash build/blubox_client.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          $launcher = (Get-FileHash build/blubox_launcher.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "sha256=$hash" >> $env:GITHUB_OUTPUT
-          "launcher=$launcher" >> $env:GITHUB_OUTPUT
-
-      - name: Compute Studio checksums
-        id: studio-checksum
-        shell: pwsh
-        run: |
-          $exe = (Get-FileHash studio-build/blubox_studio.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          $font = (Get-FileHash studio/assets/editor/fonts/InterVariable.ttf -Algorithm SHA256).Hash.ToLowerInvariant()
-          $codeFont = (Get-FileHash studio/assets/editor/fonts/JetBrainsMono-Regular.ttf -Algorithm SHA256).Hash.ToLowerInvariant()
-          $studioLauncher = (Get-FileHash build/blubox_studio_launcher.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "exe=$exe" >> $env:GITHUB_OUTPUT
           "font=$font" >> $env:GITHUB_OUTPUT
           "code_font=$codeFont" >> $env:GITHUB_OUTPUT
-          "studio_launcher=$studioLauncher" >> $env:GITHUB_OUTPUT
-          $setup = (Get-FileHash dist/Blubox-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "setup=$setup" >> $env:GITHUB_OUTPUT
 
-      - name: Publish updater payloads as a prerelease
+      - name: Publish runtime payloads and installer
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $runtimeTag = "runtime-${{ github.ref_name }}"
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $runtimeTag = "runtime-v$version"
           gh release create $runtimeTag `
-            "build/blubox_client.exe" `
-            "build/blubox_launcher.exe" `
-            "build/blubox_studio_launcher.exe" `
-            "studio-build/blubox_studio.exe" `
-            "studio/assets/editor/fonts/InterVariable.ttf" `
-            "studio/assets/editor/fonts/JetBrainsMono-Regular.ttf" `
-            "studio/assets/editor/fonts/Inter-LICENSE.txt" `
-            "studio/assets/editor/fonts/JetBrainsMono-LICENSE.txt" `
-            --repo "${{ github.repository }}" `
-            --title "Blubox runtime payloads for ${{ github.ref_name }}" `
-            --notes "Runtime files downloaded by the Blubox launcher. The user-facing installer is published separately on the matching stable release." `
-            --target "${{ github.sha }}" `
+            'build/blubox_client.exe#BluboxClient.exe' `
+            'studio-build/blubox_studio.exe#BluboxStudio.exe' `
+            'studio/dist/release_staging/assets/editor/fonts/InterVariable.ttf' `
+            'studio/dist/release_staging/assets/editor/fonts/JetBrainsMonoRegular.ttf' `
+            --repo '${{ github.repository }}' `
+            --title "Blubox runtime payloads v$version" `
+            --notes 'Runtime files downloaded by the Blubox launchers.' `
+            --target '${{ github.sha }}' `
             --prerelease
+          gh release create "v$version" `
+            "studio/dist/Blubox-Setup-$version.exe#Blubox-Setup.exe" `
+            --repo '${{ github.repository }}' `
+            --title "Blubox v$version" `
+            --notes 'Download Blubox Client and Studio with the unified installer.'
 
-          gh release create "${{ github.ref_name }}" `
-            "dist/Blubox-Setup.exe" `
-            --repo "${{ github.repository }}" `
-            --title "Blubox ${{ github.ref_name }}" `
-            --notes "Download Blubox Client and Studio with the unified installer."
-
-      - name: Publish matching launcher manifest
+      - name: Publish updater manifest
         uses: actions/github-script@v7
         env:
-          CLIENT_SHA256: ${{ steps.checksum.outputs.sha256 }}
-          CLIENT_LAUNCHER_SHA256: ${{ steps.checksum.outputs.launcher }}
-          STUDIO_SHA256: ${{ steps.studio-checksum.outputs.exe }}
-          STUDIO_FONT_SHA256: ${{ steps.studio-checksum.outputs.font }}
-          STUDIO_CODE_FONT_SHA256: ${{ steps.studio-checksum.outputs.code_font }}
-          STUDIO_LAUNCHER_SHA256: ${{ steps.studio-checksum.outputs.studio_launcher }}
-          SETUP_SHA256: ${{ steps.studio-checksum.outputs.setup }}
+          CLIENT_SHA256: ${{ steps.checksums.outputs.client }}
+          STUDIO_SHA256: ${{ steps.checksums.outputs.studio }}
+          STUDIO_FONT_SHA256: ${{ steps.checksums.outputs.font }}
+          STUDIO_CODE_FONT_SHA256: ${{ steps.checksums.outputs.code_font }}
+          SETUP_SHA256: ${{ steps.checksums.outputs.setup }}
         with:
           script: |
             const version = context.ref.replace('refs/tags/v', '');
@@ -154,31 +91,34 @@ jobs:
             const path = 'version.json';
             const current = await github.rest.repos.getContent({ owner, repo, path, ref: 'main' });
             const manifest = JSON.parse(Buffer.from(current.data.content, 'base64').toString('utf8'));
-            manifest.version = version;
             const runtimeTag = `runtime-v${version}`;
-            manifest.downloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_client.exe`;
+            manifest.version = version;
+            manifest.downloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxClient.exe`;
             manifest.sha256 = process.env.CLIENT_SHA256;
-            manifest.launcherVersion = version;
-            manifest.launcherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_launcher.exe`;
-            manifest.launcherSha256 = process.env.CLIENT_LAUNCHER_SHA256;
-            manifest.studioVersion = '${{ steps.versions.outputs.studio }}';
-            manifest.studioDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_studio.exe`;
+            manifest.studioVersion = '0.1.6';
+            manifest.studioDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxStudio.exe`;
             manifest.studioSha256 = process.env.STUDIO_SHA256;
             manifest.studioFontUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/InterVariable.ttf`;
             manifest.studioFontSha256 = process.env.STUDIO_FONT_SHA256;
-            manifest.studioCodeFontUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/JetBrainsMono-Regular.ttf`;
+            manifest.studioCodeFontUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/JetBrainsMonoRegular.ttf`;
             manifest.studioCodeFontSha256 = process.env.STUDIO_CODE_FONT_SHA256;
-            manifest.studioLauncherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_studio_launcher.exe`;
-            manifest.studioLauncherSha256 = process.env.STUDIO_LAUNCHER_SHA256;
-            manifest.studioLauncherVersion = version;
             manifest.setupDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/Blubox-Setup.exe`;
             manifest.setupSha256 = process.env.SETUP_SHA256;
+            const content = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`).toString('base64');
             await github.rest.repos.createOrUpdateFileContents({
-              owner,
-              repo,
-              path,
-              branch: 'main',
-              message: `Publish Blubox client manifest v${version}`,
-              sha: current.data.sha,
-              content: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`).toString('base64'),
+              owner, repo, path, branch: 'main', message: `Publish Blubox manifest v${version}`,
+              sha: current.data.sha, content,
+            });
+            const studioPath = 'studio-version.json';
+            const studioCurrent = await github.rest.repos.getContent({ owner, repo, path: studioPath, ref: 'main' });
+            const studioManifest = {
+              version: '0.1.6',
+              downloadUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxStudio.exe`,
+              sha256: process.env.STUDIO_SHA256,
+            };
+            await github.rest.repos.createOrUpdateFileContents({
+              owner, repo, path: studioPath, branch: 'main',
+              message: `Publish Blubox Studio manifest v${studioManifest.version}`,
+              sha: studioCurrent.data.sha,
+              content: Buffer.from(`${JSON.stringify(studioManifest, null, 2)}\n`).toString('base64'),
             });
