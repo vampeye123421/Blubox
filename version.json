@@ -1,12 +1,18 @@
 {
-  "version": "0.1.9",
-  "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.1.9/blubox_client.exe",
-  "sha256": "5ae9836b83db85eefe5eb8e5df0e100b2c3411e25bc4b9a53df7123c4f548de2",
+  "version": "0.2.0",
+  "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.0/blubox_client.exe",
+  "sha256": "bf1fd0689809a81b2ce0161d8e12a94beeed570c5b0a2def53704e5ce3b93568",
   "studioVersion": "0.1.0",
-  "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.1.9/blubox_studio.exe",
-  "studioSha256": "b14200593d939fce7ee55a56758810d33fa23ad4fa026584747378ea3ab3d166",
-  "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.1.9/InterVariable.ttf",
+  "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.0/blubox_studio.exe",
+  "studioSha256": "d6bbdecb2feb96c92e6d328f3d726f16851d230bb2812038d8620167678f1b89",
+  "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.0/InterVariable.ttf",
   "studioFontSha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf",
-  "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.1.9/JetBrainsMono-Regular.ttf",
-  "studioCodeFontSha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f"
+  "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.0/JetBrainsMono-Regular.ttf",
+  "studioCodeFontSha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
+  "launcherVersion": "0.2.0",
+  "launcherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.0/blubox_launcher.exe",
+  "launcherSha256": "6d7045803c782346f2675172956832ed984ede0ba39fc0a66541a038da4f3c19",
+  "studioLauncherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.0/blubox_studio_launcher.exe",
+  "studioLauncherSha256": "6c2563142817ad0ffe0a378df27a442592db4fad61e077f2469cc59b72424180",
+  "studioLauncherVersion": "0.2.0"
 }
