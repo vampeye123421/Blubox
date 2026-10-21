@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
@@ -93,6 +94,62 @@ void DrawProgress(float progress, std::string_view status, std::uint64_t totalBy
                   std::uint64_t transferredBytes = 0, double bytesPerSecond = 0.0);
 
 #ifdef _WIN32
+template <typename Function>
+Function LoadSystemFunction(HMODULE module, const char *name) {
+    const FARPROC address = module != nullptr ? GetProcAddress(module, name) : nullptr;
+    Function function{};
+    static_assert(sizeof(function) == sizeof(address));
+    std::memcpy(&function, &address, sizeof(function));
+    return function;
+}
+
+void ApplySplashWindowCorners() {
+    const HWND window = static_cast<HWND>(GetWindowHandle());
+    if (window == nullptr) return;
+
+    // Ask Windows 11 to round the actual borderless window, not just the
+    // inset panel drawn by Raylib. Older Windows versions get a region fallback.
+    constexpr DWORD kDwmWindowCornerPreference = 33;
+    constexpr DWORD kDwmWindowCornerRound = 2;
+    const DWORD preference = kDwmWindowCornerRound;
+    HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
+    if (dwm != nullptr) {
+        using SetWindowAttributeFn = HRESULT (WINAPI *)(HWND, DWORD, LPCVOID, DWORD);
+        const auto setWindowAttribute = LoadSystemFunction<SetWindowAttributeFn>(
+            dwm, "DwmSetWindowAttribute");
+        const bool roundedByDwm = setWindowAttribute != nullptr &&
+            SUCCEEDED(setWindowAttribute(window, kDwmWindowCornerPreference,
+                                         &preference, sizeof(preference)));
+        FreeLibrary(dwm);
+        if (roundedByDwm) return;
+    }
+
+    HMODULE gdi = LoadLibraryW(L"gdi32.dll");
+    if (gdi == nullptr) return;
+    using CreateRoundRectRegionFn = HRGN (WINAPI *)(int, int, int, int, int, int);
+    using SetWindowRegionFn = int (WINAPI *)(HWND, HRGN, BOOL);
+    using DeleteGdiObjectFn = BOOL (WINAPI *)(void *);
+    using GetWindowRectFn = BOOL (WINAPI *)(HWND, LPRECT);
+    const auto createRoundRectRegion = LoadSystemFunction<CreateRoundRectRegionFn>(
+        gdi, "CreateRoundRectRgn");
+    const auto deleteGdiObject = LoadSystemFunction<DeleteGdiObjectFn>(gdi, "DeleteObject");
+    const auto setWindowRegion = LoadSystemFunction<SetWindowRegionFn>(
+        GetModuleHandleW(L"user32.dll"), "SetWindowRgn");
+    const auto getWindowRect = LoadSystemFunction<GetWindowRectFn>(
+        GetModuleHandleW(L"user32.dll"), "GetWindowRect");
+    RECT bounds{};
+    if (createRoundRectRegion != nullptr && setWindowRegion != nullptr &&
+        getWindowRect != nullptr && getWindowRect(window, &bounds)) {
+        HRGN region = createRoundRectRegion(0, 0, bounds.right - bounds.left,
+                                            bounds.bottom - bounds.top, 36, 36);
+        if (region != nullptr && setWindowRegion(window, region, TRUE) == 0 &&
+            deleteGdiObject != nullptr) {
+            deleteGdiObject(region);
+        }
+    }
+    FreeLibrary(gdi);
+}
+
 struct WinHttpHandle {
     HINTERNET value = nullptr;
     ~WinHttpHandle() { if (value != nullptr) WinHttpCloseHandle(value); }
@@ -485,6 +542,10 @@ void InitializeSplashWindow() {
     if (!g_splash.ownsFont) g_splash.font = GetFontDefault();
     else SetTextureFilter(g_splash.font.texture, TEXTURE_FILTER_BILINEAR);
 
+#ifdef _WIN32
+    ApplySplashWindowCorners();
+#endif
+
     DWORD lightPreference = 1;
 #ifdef _WIN32
     DWORD preferenceBytes = sizeof(lightPreference);
@@ -596,10 +657,10 @@ void DrawProgress(float progress, std::string_view status, std::uint64_t totalBy
     } else {
         details << FormatBytes(static_cast<double>(transferredBytes)) << " downloaded";
     }
-    details << "  •  ";
+    details << "  |  ";
     if (bytesPerSecond > 0.0) details << FormatBytes(bytesPerSecond) << "/s";
     else details << "Calculating speed...";
-    details << "  •  ";
+    details << "  |  ";
     if (totalBytes > transferredBytes && bytesPerSecond > 1.0) {
         details << FormatRemainingTime(static_cast<double>(totalBytes - transferredBytes) / bytesPerSecond);
     } else if (totalBytes == 0) {
@@ -979,7 +1040,20 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
     fs::path installedClient = versionDirectory / "blubox_client.exe";
     const bool remoteIsNewer = hasPreviousInstall && IsNewer(targetVersion, installedVersion);
     if (hasPreviousInstall && !remoteIsNewer) installedClient = previouslyInstalledClient;
-    const bool needsUpdate = !fs::exists(installedClient) || (hasRemoteManifest && remoteIsNewer);
+    bool cachedClientMatchesManifest = fs::exists(installedClient);
+    if (cachedClientMatchesManifest && hasRemoteManifest && targetVersion == installedVersion &&
+        !manifest.sha256.empty()) {
+        try {
+            cachedClientMatchesManifest = Sha256File(installedClient) == manifest.sha256;
+        } catch (const std::exception &) {
+            cachedClientMatchesManifest = false;
+        }
+        if (!cachedClientMatchesManifest) {
+            std::error_code removeError;
+            fs::remove(installedClient, removeError);
+        }
+    }
+    const bool needsUpdate = !cachedClientMatchesManifest || (hasRemoteManifest && remoteIsNewer);
 
     if (needsUpdate) {
         SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);

@@ -1,11 +1,11 @@
 #ifndef AppVersion
-  #define AppVersion "0.2.4"
+  #define AppVersion "0.2.6"
 #endif
 #ifndef ClientVersion
   #define ClientVersion AppVersion
 #endif
 #ifndef StudioVersion
-  #define StudioVersion "0.1.4"
+  #define StudioVersion "0.1.5"
 #endif
 #ifndef ProductMode
   #define ProductMode "Bundle"

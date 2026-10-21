@@ -140,6 +140,23 @@ void RemoveUninstaller(const wchar_t *keyName) {
     }
 }
 
+void UpdateInnoUninstallVersion(const wchar_t *appId, const wchar_t *productName,
+                                std::string_view version) {
+    const std::wstring subkey = std::wstring(kUninstallRegistryRoot) + appId + L"_is1";
+    RegistryKey key;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, subkey.c_str(), 0, KEY_SET_VALUE,
+                      key.Put()) != ERROR_SUCCESS) {
+        return; // Portable or development installs may not have an Inno entry.
+    }
+
+    // The launcher updates app binaries independently of Inno Setup. Keep the
+    // existing uninstall record current instead of creating a duplicate entry.
+    const std::wstring wideVersion(version.begin(), version.end());
+    SetStringValue(key.Get(), L"DisplayVersion", wideVersion);
+    SetStringValue(key.Get(), L"DisplayName",
+                   std::wstring(productName) + L" version " + wideVersion);
+}
+
 std::wstring PowerShellLiteral(const std::wstring &value) {
     std::wstring result = L"'";
     for (wchar_t ch : value) {
@@ -377,10 +394,11 @@ void CreateBluboxStudioShortcuts(const std::filesystem::path &launcherExecutable
 void RegisterBluboxClientUninstaller(const std::filesystem::path &launcherExecutable,
                                      std::string_view version) {
 #ifdef _WIN32
-    // Inno Setup owns the Add/Remove Programs entry. Older launchers created a
-    // second entry here; remove that legacy entry instead of recreating it.
+    // Inno Setup owns the Add/Remove Programs entry. Refresh its version when
+    // the launcher installs a newer client, and remove the old duplicate entry.
     (void)launcherExecutable;
-    (void)version;
+    UpdateInnoUninstallVersion(L"{5F1E3447-4F5B-43CE-8E96-FA67BE6F17A1}",
+                               L"Blubox Client", version);
     RemoveUninstaller(L"Blubox");
 #else
     (void)launcherExecutable;
@@ -391,10 +409,10 @@ void RegisterBluboxClientUninstaller(const std::filesystem::path &launcherExecut
 void RegisterBluboxStudioUninstaller(const std::filesystem::path &launcherExecutable,
                                      std::string_view version) {
 #ifdef _WIN32
-    // Inno Setup owns the Add/Remove Programs entry. Older launchers created a
-    // second entry here; remove that legacy entry instead of recreating it.
+    // Keep Studio's Inno Setup entry aligned with the self-updated Studio build.
     (void)launcherExecutable;
-    (void)version;
+    UpdateInnoUninstallVersion(L"{855A8507-8E44-4A19-9DB7-B33A43C01D44}",
+                               L"Blubox Studio", version);
     RemoveUninstaller(L"BluboxStudio");
 #else
     (void)launcherExecutable;
