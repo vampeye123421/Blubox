@@ -1,5 +1,12 @@
 {
-  "version": "0.1.8",
-  "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.1.8/blubox_client.exe",
-  "sha256": "1ecde631c881771673187208fded41c13fe795f94c1bef20db21e595a66ec320"
-}
+  "version": "0.1.9",
+  "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.1.9/blubox_client.exe",
+  "sha256": "5ae9836b83db85eefe5eb8e5df0e100b2c3411e25bc4b9a53df7123c4f548de2",
+  "studioVersion": "0.1.0",
+  "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.1.9/blubox_studio.exe",
+  "studioSha256": "b14200593d939fce7ee55a56758810d33fa23ad4fa026584747378ea3ab3d166",
+  "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.1.9/InterVariable.ttf",
+  "studioFontSha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf",
+  "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.1.9/JetBrainsMono-Regular.ttf",
+  "studioCodeFontSha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f"
+}`n
