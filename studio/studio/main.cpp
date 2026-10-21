@@ -1340,6 +1340,10 @@ void DrawViewport(StudioState& state) {
             state.map.entities[static_cast<std::size_t>(state.selectedEntity)].kind != "frame" &&
             state.map.entities[static_cast<std::size_t>(state.selectedEntity)].kind != "textlabel" &&
             state.map.entities[static_cast<std::size_t>(state.selectedEntity)].kind != "textbutton") {
+            // The viewport Image is a regular ImGui item. ImGuizmo refuses to
+            // begin a drag while any item is hovered, so release that item's
+            // hover ownership while preserving the viewport hit-test above.
+            ImGui::SetHoveredID(0);
             ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
             ImGuizmo::SetRect(imageMin.x, imageMin.y, imageSize.x, imageSize.y);
             ImGuizmo::SetOrthographic(false);
@@ -1535,6 +1539,7 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
         ClearBackground(Color{19, 19, 26, 255});
         if (state.authenticated && state.projectOpen) DrawWorld(state);
         rlImGuiBegin();
+        ImGuizmo::BeginFrame();
         if (!state.authenticated) {
             DrawLoginModal(state);
         } else if (state.projectOpen) {
