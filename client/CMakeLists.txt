@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.2.11 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.2.12 LANGUAGES C CXX)
 if(WIN32)
     enable_language(RC)
 endif()
