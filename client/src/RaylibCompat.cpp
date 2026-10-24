@@ -99,8 +99,9 @@ Texture2D CreateNameplateTextureSafe(const Font *font, const char *text, bool ve
     if (verified) {
         const int centerX = paddingX + static_cast<int>(measured.x) + badgeGap + badgeSize / 2;
         const int centerY = height / 2;
+        // Cyan verification mark, matching assets/branding/verified-badge.svg.
         ImageDrawCircle(&image, centerX, centerY, badgeSize / 2,
-                        Color{0, 210, 255, 255});
+                        Color{0, 190, 245, 255});
         const Color check{255, 255, 255, 255};
         ImageDrawLine(&image, centerX - 11, centerY, centerX - 2, centerY + 9, check);
         ImageDrawLine(&image, centerX - 2, centerY + 9, centerX + 14, centerY - 11, check);

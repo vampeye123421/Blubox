@@ -254,15 +254,38 @@ Vector3 NormalizeVector(Vector3 value) {
     return Vector3{ value.x / length, value.y / length, value.z / length };
 }
 
-Color PlayerColor(std::string_view userId, std::uint64_t sessionId = 0) {
-    // Stable FNV-1a hash makes each connection's color consistent across clients.
-    std::uint32_t hash = 2166136261u;
-    for (const unsigned char ch : userId) hash = (hash ^ ch) * 16777619u;
-    for (int shift = 56; shift >= 0; shift -= 8) {
-        hash = (hash ^ static_cast<unsigned char>((sessionId >> shift) & 0xffu)) * 16777619u;
-    }
-    const float hue = static_cast<float>(hash % 360u);
-    return ColorFromHSV(hue, 0.72f, 0.94f);
+const std::array<Color, 128> &PlayerPalette() {
+    // Use a cyan-to-blue palette only. Varying hue, saturation and brightness
+    // gives the server's 128-player limit a unique, repeatable color slot.
+    static const std::array<Color, 128> palette = [] {
+        std::array<Color, 128> colors{};
+        constexpr std::array<float, 8> hues{183.0f, 189.0f, 195.0f, 201.0f,
+                                           207.0f, 213.0f, 219.0f, 225.0f};
+        constexpr std::array<float, 4> saturations{0.72f, 0.82f, 0.91f, 0.98f};
+        constexpr std::array<float, 4> brightness{0.78f, 0.86f, 0.94f, 1.0f};
+        std::size_t index = 0;
+        for (const float value : brightness) {
+            for (const float saturation : saturations) {
+                for (const float hue : hues) {
+                    colors[index++] = ColorFromHSV(hue, saturation, value);
+                }
+            }
+        }
+        return colors;
+    }();
+    return palette;
+}
+
+Color PlayerColorForSession(std::uint64_t sessionId,
+                            const std::vector<std::uint64_t> &orderedSessions) {
+    const auto &palette = PlayerPalette();
+    if (sessionId == 0 || orderedSessions.empty()) return palette.front();
+    const auto found = std::lower_bound(orderedSessions.begin(), orderedSessions.end(), sessionId);
+    if (found == orderedSessions.end() || *found != sessionId) return palette.front();
+    const std::size_t playerIndex = static_cast<std::size_t>(found - orderedSessions.begin());
+    // Session IDs come from the authoritative server, so every client assigns
+    // the same distinct palette slot to each player in a shared server.
+    return palette[playerIndex % palette.size()];
 }
 
 } // namespace
@@ -483,7 +506,15 @@ void GameClient::DrawFrame() {
     const Vector3 playerPosition = ToRaylibVector(player_->Position());
     std::string localDisplayName = session_.HasToken() ? session_.DisplayName() : "Guest";
     bool localVerified = networkClient_.UserVerified();
-    const std::string &localUserId = networkClient_.UserId();
+    std::vector<std::uint64_t> orderedSessions;
+    orderedSessions.reserve(networkClient_.Players().size() + 1);
+    if (networkClient_.SessionId() != 0) orderedSessions.push_back(networkClient_.SessionId());
+    for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
+        if (remote.sessionId != 0) orderedSessions.push_back(remote.sessionId);
+    }
+    std::sort(orderedSessions.begin(), orderedSessions.end());
+    orderedSessions.erase(std::unique(orderedSessions.begin(), orderedSessions.end()),
+                          orderedSessions.end());
     for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
         if (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId() &&
             !remote.displayName.empty()) {
@@ -538,8 +569,7 @@ void GameClient::DrawFrame() {
               Vector3{kGroundHalfExtent * 2.0f, kGroundThickness,
                       kGroundHalfExtent * 2.0f}, Color{126, 164, 139, 255});
 
-    const std::string_view localColorId = localUserId.empty() ? "guest" : localUserId;
-    const Color characterTint = PlayerColor(localColorId, networkClient_.SessionId());
+    const Color characterTint = PlayerColorForSession(networkClient_.SessionId(), orderedSessions);
     if (characterModelsReady_) {
         DrawLitCharacter(&characterCylinderModel_, &characterSphereModel_, playerPosition,
                          Player::kHalfHeightOfCylinder, characterTint);
@@ -591,7 +621,7 @@ void GameClient::DrawFrame() {
         }
 
         const Vector3 remotePosition{remote.x, remote.y, remote.z};
-        const Color remoteTint = PlayerColor(remote.userId, remote.sessionId);
+        const Color remoteTint = PlayerColorForSession(remote.sessionId, orderedSessions);
         if (characterModelsReady_) {
             DrawLitCharacter(&characterCylinderModel_, &characterSphereModel_, remotePosition,
                              Player::kHalfHeightOfCylinder, remoteTint);

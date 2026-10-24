@@ -193,6 +193,7 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
             presenceReporter_.Start(std::string(session_->PresenceToken()));
         }
         TraceLog(LOG_INFO, "Handshake authenticated for player %s.", userId_.c_str());
+        TraceLog(LOG_INFO, "Verified badge status: %s.", userVerified_ ? "enabled" : "not verified");
         return;
     }
 
