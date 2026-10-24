@@ -124,15 +124,14 @@ bool NetworkClient::Connect(const ClientSession &session) {
     }
 
     ENetAddress address{};
-    const auto localPort = session.LocalServerPort();
-    const char *serverHost = localPort.has_value() ? "127.0.0.1" : kServerHost;
+    const char *serverHost = kServerHost;
     if (enet_address_set_host(&address, serverHost) != 0) {
         TraceLog(LOG_ERROR, "DNS lookup failed for the Blubox server.");
         Shutdown();
         disconnectKind_ = DisconnectKind::ConnectionFailed;
         return false;
     }
-    address.port = localPort.value_or(kServerPort);
+    address.port = kServerPort;
 
     peer_ = enet_host_connect(host_, &address, 1, 0);
     if (peer_ == nullptr) {
@@ -142,9 +141,8 @@ bool NetworkClient::Connect(const ClientSession &session) {
         return false;
     }
 
-    TraceLog(LOG_INFO, "Started ENet connection to %s:%u%s.", serverHost,
-             static_cast<unsigned int>(address.port),
-             localPort.has_value() ? " (local test server)" : "");
+    TraceLog(LOG_INFO, "Started ENet connection to %s:%u.", serverHost,
+             static_cast<unsigned int>(address.port));
     return true;
 }
 
