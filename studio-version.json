@@ -1,5 +1,5 @@
 {
-  "version": "0.1.8",
-  "downloadUrl": "https://raw.githubusercontent.com/vampeye123421/Blubox/main/bin/BluboxStudio.exe",
-  "sha256": "61135e5ab163a80596525ec5a87ce3ca204018830e77799afedc00f701e2d46b"
+  "version": "0.1.6",
+  "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.8/BluboxStudio.exe",
+  "sha256": "f537da67b0d74942b76829b1a3194909ab900eab213d9cecd73d311947cfb0df"
 }
