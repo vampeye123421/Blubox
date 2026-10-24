@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -367,7 +368,7 @@ int GameClient::Run() {
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(kWindowWidth, kWindowHeight, "Blubox Client - Local Guest");
     if (!IsWindowReady()) {
-        return 1;
+        throw std::runtime_error("Blubox Client couldn't create its OpenGL window. Update your graphics driver and try again.");
     }
     Image appIcon = LoadImageFromMemory(".png", blubox::kBrandIconData, blubox::kBrandIconDataSize);
     if (appIcon.data != nullptr) {

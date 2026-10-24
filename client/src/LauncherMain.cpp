@@ -9,6 +9,18 @@
 
 #ifdef _WIN32
 #include <cstdlib>
+#define WIN32_LEAN_AND_MEAN
+#define Rectangle Win32Rectangle
+#define CloseWindow Win32CloseWindow
+#define ShowCursor Win32ShowCursor
+#define DrawText Win32DrawText
+#define DrawTextEx Win32DrawTextEx
+#include <windows.h>
+#undef DrawTextEx
+#undef DrawText
+#undef ShowCursor
+#undef CloseWindow
+#undef Rectangle
 #endif
 
 int main(int argc, char *argv[]) {
@@ -48,7 +60,11 @@ int main(int argc, char *argv[]) {
         }
         return RunLauncher(options, argc, argv);
     } catch (const std::exception &error) {
+#ifdef _WIN32
+        MessageBoxA(nullptr, error.what(), "Blubox Launcher", MB_OK | MB_ICONERROR);
+#else
         std::cerr << "Launcher error: " << error.what() << '\n';
+#endif
         return 1;
     }
 }

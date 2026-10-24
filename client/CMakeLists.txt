@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.2.13 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.2.14 LANGUAGES C CXX)
 if(WIN32)
     enable_language(RC)
 endif()
@@ -65,7 +65,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(raylib JoltPhysics enet nlohmann_json luau)
 
-add_executable(blubox_client
+add_executable(blubox_client WIN32
     src/ClientMain.cpp
     src/ClientSession.cpp
     src/NetworkClient.cpp
@@ -177,7 +177,7 @@ add_custom_command(
     VERBATIM
 )
 
-add_executable(blubox_launcher
+add_executable(blubox_launcher WIN32
     src/LauncherMain.cpp
     src/Launcher.cpp
     src/LaunchOptions.cpp
@@ -205,7 +205,7 @@ if(WIN32 AND MINGW)
 endif()
 
 # Dedicated updater entry point for the Studio Start Menu shortcut.
-add_executable(blubox_studio_launcher
+add_executable(blubox_studio_launcher WIN32
     src/LauncherMain.cpp
     src/Launcher.cpp
     src/LaunchOptions.cpp
