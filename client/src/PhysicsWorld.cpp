@@ -18,9 +18,9 @@ constexpr JPH::ObjectLayer kNonMovingLayer = 0;
 constexpr JPH::ObjectLayer kMovingLayer = 1;
 constexpr JPH::BroadPhaseLayer kNonMovingBroadPhaseLayer(0);
 constexpr JPH::BroadPhaseLayer kMovingBroadPhaseLayer(1);
-constexpr JPH::uint kMaxBodies = 1024;
-constexpr JPH::uint kMaxBodyPairs = 1024;
-constexpr JPH::uint kMaxContactConstraints = 1024;
+constexpr JPH::uint kMaxBodies = 16384;
+constexpr JPH::uint kMaxBodyPairs = 16384;
+constexpr JPH::uint kMaxContactConstraints = 16384;
 constexpr float kFixedTimeStep = 1.0f / 120.0f;
 constexpr int kMaxStepsPerFrame = 8;
 

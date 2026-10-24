@@ -94,17 +94,22 @@ NetworkClient::~NetworkClient() {
 }
 
 bool NetworkClient::Connect(const ClientSession &session) {
+    Shutdown();
+    disconnectKind_ = DisconnectKind::None;
     if (!session.HasToken()) {
         TraceLog(LOG_WARNING, "ENet not started: the join session token is missing.");
+        disconnectKind_ = DisconnectKind::JoinRejected;
         return false;
     }
     if (!session.HasWorldId()) {
         TraceLog(LOG_WARNING, "ENet not started: the join session worldId is missing.");
+        disconnectKind_ = DisconnectKind::JoinRejected;
         return false;
     }
 
     if (enet_initialize() != 0) {
         TraceLog(LOG_ERROR, "ENet initialization failed; continuing in local mode.");
+        disconnectKind_ = DisconnectKind::ConnectionFailed;
         return false;
     }
     enetInitialized_ = true;
@@ -114,27 +119,32 @@ bool NetworkClient::Connect(const ClientSession &session) {
     if (host_ == nullptr) {
         TraceLog(LOG_ERROR, "Could not create the ENet host; continuing in local mode.");
         Shutdown();
+        disconnectKind_ = DisconnectKind::ConnectionFailed;
         return false;
     }
 
     ENetAddress address{};
-    // Resolve the fixed hostname at runtime instead of embedding a numeric IP.
-    if (enet_address_set_host(&address, kServerHost) != 0) {
+    const auto localPort = session.LocalServerPort();
+    const char *serverHost = localPort.has_value() ? "127.0.0.1" : kServerHost;
+    if (enet_address_set_host(&address, serverHost) != 0) {
         TraceLog(LOG_ERROR, "DNS lookup failed for the Blubox server.");
         Shutdown();
+        disconnectKind_ = DisconnectKind::ConnectionFailed;
         return false;
     }
-    address.port = kServerPort;
+    address.port = localPort.value_or(kServerPort);
 
     peer_ = enet_host_connect(host_, &address, 1, 0);
     if (peer_ == nullptr) {
         TraceLog(LOG_ERROR, "Could not start the ENet connection; continuing in local mode.");
         Shutdown();
+        disconnectKind_ = DisconnectKind::ConnectionFailed;
         return false;
     }
 
-    TraceLog(LOG_INFO, "Started ENet connection to %s:%u.", kServerHost,
-             static_cast<unsigned int>(kServerPort));
+    TraceLog(LOG_INFO, "Started ENet connection to %s:%u%s.", serverHost,
+             static_cast<unsigned int>(address.port),
+             localPort.has_value() ? " (local test server)" : "");
     return true;
 }
 
@@ -160,6 +170,17 @@ void NetworkClient::Poll() {
         case ENET_EVENT_TYPE_DISCONNECT:
             TraceLog(LOG_WARNING, "ENet connection closed by server (code %u).", event.data);
             peer_ = nullptr;
+            presenceReporter_.Stop();
+            authenticated_ = false;
+            sessionId_ = 0;
+            userVerified_ = false;
+            userId_.clear();
+            players_.clear();
+            disconnectKind_ = event.data == 1 ? DisconnectKind::Kicked
+                : event.data == 2 ? DisconnectKind::JoinRejected
+                                  : DisconnectKind::ConnectionLost;
+            TraceLog(LOG_ERROR, "Network session ended; client left the server session (reason code %u).",
+                     event.data);
             break;
         case ENET_EVENT_TYPE_NONE:
         default:
@@ -169,6 +190,14 @@ void NetworkClient::Poll() {
 
     if (result < 0) {
         TraceLog(LOG_ERROR, "Error while servicing ENet events.");
+        peer_ = nullptr;
+        presenceReporter_.Stop();
+        authenticated_ = false;
+        sessionId_ = 0;
+        userVerified_ = false;
+        userId_.clear();
+        players_.clear();
+        disconnectKind_ = DisconnectKind::ConnectionLost;
     }
 }
 
@@ -189,6 +218,7 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
         userVerified_ = bytes[12] != 0;
         userId_.assign(reinterpret_cast<const char *>(bytes + 13), idLength);
         authenticated_ = true;
+        disconnectKind_ = DisconnectKind::None;
         if (session_ != nullptr) {
             presenceReporter_.Start(std::string(session_->PresenceToken()));
         }
@@ -316,6 +346,7 @@ void NetworkClient::Shutdown() noexcept {
     userVerified_ = false;
     players_.clear();
     authenticated_ = false;
+    disconnectKind_ = DisconnectKind::None;
     if (enetInitialized_) {
         enet_deinitialize();
         enetInitialized_ = false;

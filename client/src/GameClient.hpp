@@ -5,6 +5,8 @@
 #include "NetworkClient.hpp"
 #include "PhysicsWorld.hpp"
 #include "Player.hpp"
+#include "PublishedWorld.hpp"
+#include "LocalScriptRuntime.hpp"
 
 #include <raylib.h>
 
@@ -26,6 +28,8 @@ private:
     ClientSession session_;
     NetworkClient networkClient_;
     PhysicsWorld physicsWorld_;
+    PublishedWorld publishedWorld_;
+    LocalScriptRuntime localScriptRuntime_;
     std::unique_ptr<Player> player_;
     Camera3D camera_{};
     Shader lightingShader_{};
@@ -37,6 +41,7 @@ private:
     Texture2D sunTexture_{};
     Font uiFont_{};
     std::unordered_map<std::string, Texture2D> nameplateTextures_;
+    std::unordered_map<std::uint64_t, std::size_t> playerColorSlots_;
     int sunToLightLocation_ = -1;
     int viewPositionLocation_ = -1;
     int skyboxEnvironmentLocation_ = -1;

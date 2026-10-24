@@ -104,6 +104,8 @@ ClientSession::ClientSession(ProtocolLaunchData *launchData) {
         worldId_ = std::move(*launchData->worldId);
         launchData->worldId.reset();
     }
+    localServerPort_ = launchData->localServerPort;
+    launchData->localServerPort.reset();
 
     // The parsed URL and query map contain duplicate token copies. They are no
     // longer needed after extracting session state, so scrub the raw URI and

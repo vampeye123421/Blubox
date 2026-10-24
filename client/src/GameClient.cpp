@@ -118,14 +118,84 @@ void DrawLitCharacter(const Model *cylinder, const Model *sphere, Vector3 center
                       float halfCylinderHeight, Color tint) {
     if (cylinder == nullptr || sphere == nullptr) return;
 
-    // The cylinder mesh is generated from y=0 to y=height; sphere centers sit
-    // at its ends, matching Jolt's capsule collider dimensions.
-    const Vector3 cylinderBottom{center.x, center.y - halfCylinderHeight, center.z};
+    // GenMeshCylinder is centered at its origin. Keeping the mesh centered
+    // between the cap centers avoids overlapping surfaces that shimmer.
     const Vector3 lowerCap{center.x, center.y - halfCylinderHeight, center.z};
     const Vector3 upperCap{center.x, center.y + halfCylinderHeight, center.z};
-    DrawModelSafe(cylinder, &cylinderBottom, 1.0f, &tint);
+    DrawModelSafe(cylinder, &center, 1.0f, &tint);
     DrawModelSafe(sphere, &lowerCap, 1.0f, &tint);
     DrawModelSafe(sphere, &upperCap, 1.0f, &tint);
+}
+
+struct DisconnectDialogLayout {
+    Rectangle panel{};
+    Rectangle leave{};
+    Rectangle reconnect{};
+};
+
+DisconnectDialogLayout GetDisconnectDialogLayout() {
+    const float width = std::min(440.0f, static_cast<float>(GetScreenWidth()) - 32.0f);
+    constexpr float height = 222.0f;
+    const float x = (static_cast<float>(GetScreenWidth()) - width) * 0.5f;
+    const float y = (static_cast<float>(GetScreenHeight()) - height) * 0.5f;
+    constexpr float gap = 10.0f;
+    const float buttonWidth = (width - 32.0f - gap) * 0.5f;
+    return {
+        Rectangle{x, y, width, height},
+        Rectangle{x + 16.0f, y + height - 52.0f, buttonWidth, 36.0f},
+        Rectangle{x + 16.0f + buttonWidth + gap, y + height - 52.0f, buttonWidth, 36.0f}
+    };
+}
+
+void DrawCenteredText(const Font *font, const char *text, float centerX, float y,
+                      float size, Color color) {
+    const Vector2 measured = MeasureTextExSafe(font, text, size, 0.0f);
+    DrawTextExSafe(font, text, Vector2{centerX - measured.x * 0.5f, y}, size, 0.0f, color);
+}
+
+void DrawDisconnectDialog(const Font *font, DisconnectKind reason) {
+    const DisconnectDialogLayout layout = GetDisconnectDialogLayout();
+    const float centerX = layout.panel.x + layout.panel.width * 0.5f;
+    const Vector2 mouse = GetMousePosition();
+    const bool leaveHover = CheckCollisionPointRec(mouse, layout.leave);
+    const bool reconnectHover = CheckCollisionPointRec(mouse, layout.reconnect);
+
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, 142});
+    DrawRectangleRounded(layout.panel, 0.055f, 12, Color{55, 58, 61, 255});
+    DrawLineEx(Vector2{layout.panel.x + 18.0f, layout.panel.y + 54.0f},
+               Vector2{layout.panel.x + layout.panel.width - 18.0f, layout.panel.y + 54.0f},
+               1.0f, Color{218, 220, 222, 210});
+
+    const char *message = "Please check your internet connection and try again.";
+    const char *code = "(Error Code: 277)";
+    if (reason == DisconnectKind::Kicked) {
+        message = "You were kicked from this server.";
+        code = "(Error Code: 267)";
+    } else if (reason == DisconnectKind::JoinRejected) {
+        message = "The server couldn't verify this join.";
+        code = "(Error Code: 273)";
+    } else if (reason == DisconnectKind::ConnectionFailed) {
+        message = "Couldn't connect. Check that the server is running.";
+        code = "(Error Code: 279)";
+    }
+
+    DrawCenteredText(font, "Disconnected", centerX, layout.panel.y + 16.0f, 22.0f,
+                     Color{250, 250, 250, 255});
+    DrawCenteredText(font, message, centerX, layout.panel.y + 75.0f, 17.0f,
+                     Color{215, 216, 217, 255});
+    DrawCenteredText(font, code, centerX, layout.panel.y + 101.0f, 16.0f,
+                     Color{215, 216, 217, 255});
+
+    DrawRectangleRounded(layout.leave, 0.18f, 8,
+                         leaveHover ? Color{76, 79, 82, 255} : Color{55, 58, 61, 255});
+    DrawRectangleRoundedLinesEx(layout.leave, 0.18f, 8, 1.0f, Color{205, 207, 209, 255});
+    DrawCenteredText(font, "Leave", layout.leave.x + layout.leave.width * 0.5f,
+                     layout.leave.y + 8.0f, 16.0f, Color{235, 236, 237, 255});
+
+    DrawRectangleRounded(layout.reconnect, 0.18f, 8,
+                         reconnectHover ? Color{245, 246, 247, 255} : Color{255, 255, 255, 255});
+    DrawCenteredText(font, "Reconnect", layout.reconnect.x + layout.reconnect.width * 0.5f,
+                     layout.reconnect.y + 8.0f, 16.0f, Color{44, 47, 50, 255});
 }
 
 float HashNoise(int x, int y, int z) {
@@ -277,15 +347,11 @@ const std::array<Color, 128> &PlayerPalette() {
 }
 
 Color PlayerColorForSession(std::uint64_t sessionId,
-                            const std::vector<std::uint64_t> &orderedSessions) {
+                            const std::unordered_map<std::uint64_t, std::size_t> &slots) {
     const auto &palette = PlayerPalette();
-    if (sessionId == 0 || orderedSessions.empty()) return palette.front();
-    const auto found = std::lower_bound(orderedSessions.begin(), orderedSessions.end(), sessionId);
-    if (found == orderedSessions.end() || *found != sessionId) return palette.front();
-    const std::size_t playerIndex = static_cast<std::size_t>(found - orderedSessions.begin());
-    // Session IDs come from the authoritative server, so every client assigns
-    // the same distinct palette slot to each player in a shared server.
-    return palette[playerIndex % palette.size()];
+    if (sessionId == 0) return palette.front();
+    const auto found = slots.find(sessionId);
+    return found == slots.end() ? palette.front() : palette[found->second % palette.size()];
 }
 
 } // namespace
@@ -295,7 +361,10 @@ GameClient::GameClient(LaunchOptions options)
       session_(options_.protocolLaunch.has_value() ? &*options_.protocolLaunch : nullptr) {}
 
 int GameClient::Run() {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
+    // Do not require an MSAA pixel format from WGL. Some Windows drivers and
+    // remote display adapters expose OpenGL but no 4x multisample format; GLFW
+    // then rejects every available pixel format before the client can start.
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(kWindowWidth, kWindowHeight, "Blubox Client - Local Guest");
     if (!IsWindowReady()) {
         return 1;
@@ -310,6 +379,21 @@ int GameClient::Run() {
     if (options_.protocolLaunch.has_value() && options_.protocolLaunch->action == "join") {
         networkClient_.Connect(session_);
     }
+
+    bool publishedWorldLoaded = false;
+    if (session_.HasWorldId()) {
+        std::string worldError;
+        publishedWorldLoaded = publishedWorld_.Load(session_.WorldId(), worldError);
+        if (publishedWorldLoaded) {
+            TraceLog(LOG_INFO, "GameClient: loaded published world '%s' (%d parts, %d GUI elements).",
+                     session_.WorldId().c_str(), static_cast<int>(publishedWorld_.Parts().size()),
+                     publishedWorld_.HasGui() ? 1 : 0);
+        } else {
+            TraceLog(LOG_WARNING, "GameClient: published map unavailable: %s", worldError.c_str());
+        }
+    }
+    if (publishedWorldLoaded && !publishedWorld_.LocalScripts().empty())
+        localScriptRuntime_.Start(publishedWorld_);
 
     SetWindowMinSize(960, 540);
     SetTargetFPS(180);
@@ -404,11 +488,27 @@ int GameClient::Run() {
     else TraceLog(LOG_WARNING, "Embedded UI font could not be loaded; using the Raylib font.");
     TraceLog(LOG_INFO, "GameClient: lighting, cubemap sky and UI font initialized.");
 
-    physicsWorld_.CreateStaticBox(JPH::RVec3(0.0, -kGroundThickness * 0.5, 0.0),
-                                  JPH::Vec3(kGroundHalfExtent, kGroundThickness * 0.5,
-                                            kGroundHalfExtent));
-    TraceLog(LOG_INFO, "GameClient: Jolt ground created.");
-    player_ = std::make_unique<Player>(physicsWorld_);
+    if (publishedWorldLoaded && publishedWorld_.HasParts()) {
+        std::size_t collisionBodies = 0;
+        for (const auto &part : publishedWorld_.Parts()) {
+            if (!part.collidable || collisionBodies >= 8192) continue;
+            const float hx = std::max(0.05f, part.size.x * 0.5f);
+            const float hy = std::max(0.05f, part.size.y * 0.5f);
+            const float hz = std::max(0.05f, part.size.z * 0.5f);
+            physicsWorld_.CreateStaticBox(JPH::RVec3(part.position.x, part.position.y, part.position.z),
+                                          JPH::Vec3(hx, hy, hz));
+            ++collisionBodies;
+        }
+        TraceLog(LOG_INFO, "GameClient: created %d static collision bodies from the published map.",
+                 static_cast<int>(collisionBodies));
+    } else {
+        physicsWorld_.CreateStaticBox(JPH::RVec3(0.0, -kGroundThickness * 0.5, 0.0),
+                                      JPH::Vec3(kGroundHalfExtent, kGroundThickness * 0.5,
+                                                kGroundHalfExtent));
+        TraceLog(LOG_INFO, "GameClient: default Jolt ground created.");
+    }
+    const Vector3 initialSpawn = publishedWorldLoaded ? publishedWorld_.SpawnPosition() : Vector3{0.0f, 3.0f, 0.0f};
+    player_ = std::make_unique<Player>(physicsWorld_, JPH::RVec3(initialSpawn.x, initialSpawn.y, initialSpawn.z));
     TraceLog(LOG_INFO, "GameClient: player created.");
 
     if (session_.HasToken()) {
@@ -424,15 +524,18 @@ int GameClient::Run() {
     camera_.up = Vector3{0.0f, 1.0f, 0.0f};
     camera_.fovy = 60.0f;
     camera_.projection = CAMERA_PERSPECTIVE;
-    DisableCursor();
+    mouseCaptured_ = !(publishedWorldLoaded && publishedWorld_.HasGui());
+    if (mouseCaptured_) DisableCursor();
+    else EnableCursor();
     UpdateCamera();
     TraceLog(LOG_INFO, "GameClient: entering frame loop.");
 
     while (!WindowShouldClose() && running_) {
         const float deltaSeconds = GetFrameTime();
         Update(deltaSeconds);
+        if (!networkClient_.HasDisconnectNotice()) localScriptRuntime_.Tick(deltaSeconds);
         networkClient_.Poll();
-        physicsWorld_.Step(deltaSeconds);
+        if (!networkClient_.HasDisconnectNotice()) physicsWorld_.Step(deltaSeconds);
         const JPH::Vec3 networkPosition = player_->Position();
         networkClient_.SendPlayerPosition(networkPosition.GetX(), networkPosition.GetY(),
                                           networkPosition.GetZ());
@@ -441,6 +544,7 @@ int GameClient::Run() {
     }
 
     EnableCursor();
+    localScriptRuntime_.Stop();
     if (customFontLoaded_) UnloadFont(uiFont_);
     for (const auto &[name, texture] : nameplateTextures_) {
         (void)name;
@@ -463,8 +567,26 @@ int GameClient::Run() {
 }
 
 void GameClient::Update(float deltaSeconds) {
+    if (networkClient_.HasDisconnectNotice()) {
+        mouseCaptured_ = false;
+        EnableCursor();
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            const auto layout = GetDisconnectDialogLayout();
+            const Vector2 mouse = GetMousePosition();
+            if (CheckCollisionPointRec(mouse, layout.leave)) {
+                running_ = false;
+            } else if (CheckCollisionPointRec(mouse, layout.reconnect)) {
+                networkClient_.Connect(session_);
+            }
+        }
+        return;
+    }
+
     if (IsKeyPressed(KEY_ESCAPE)) {
-        running_ = false;
+        if (mouseCaptured_) {
+            mouseCaptured_ = false;
+            EnableCursor();
+        }
     }
     if (IsKeyPressed(KEY_F11)) {
         ToggleFullscreen();
@@ -473,9 +595,16 @@ void GameClient::Update(float deltaSeconds) {
         mouseCaptured_ = !mouseCaptured_;
         if (mouseCaptured_) DisableCursor();
         else EnableCursor();
-    } else if (!mouseCaptured_ && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-        mouseCaptured_ = true;
-        DisableCursor();
+    } else if (!mouseCaptured_) {
+        std::string activatedId;
+        const bool uiConsumed = publishedWorld_.HandleGuiPointer(
+            GetMousePosition(), IsMouseButtonPressed(MOUSE_BUTTON_LEFT),
+            IsMouseButtonReleased(MOUSE_BUTTON_LEFT), activatedId);
+        if (!activatedId.empty()) localScriptRuntime_.FireActivated(activatedId);
+        if (!uiConsumed && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            mouseCaptured_ = true;
+            DisableCursor();
+        }
     }
 
     if (mouseCaptured_) {
@@ -506,15 +635,34 @@ void GameClient::DrawFrame() {
     const Vector3 playerPosition = ToRaylibVector(player_->Position());
     std::string localDisplayName = session_.HasToken() ? session_.DisplayName() : "Guest";
     bool localVerified = networkClient_.UserVerified();
-    std::vector<std::uint64_t> orderedSessions;
-    orderedSessions.reserve(networkClient_.Players().size() + 1);
-    if (networkClient_.SessionId() != 0) orderedSessions.push_back(networkClient_.SessionId());
+    std::vector<std::uint64_t> activeSessions;
+    activeSessions.reserve(networkClient_.Players().size() + 1);
+    if (networkClient_.SessionId() != 0) activeSessions.push_back(networkClient_.SessionId());
     for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
-        if (remote.sessionId != 0) orderedSessions.push_back(remote.sessionId);
+        if (remote.sessionId != 0) activeSessions.push_back(remote.sessionId);
     }
-    std::sort(orderedSessions.begin(), orderedSessions.end());
-    orderedSessions.erase(std::unique(orderedSessions.begin(), orderedSessions.end()),
-                          orderedSessions.end());
+    std::sort(activeSessions.begin(), activeSessions.end());
+    activeSessions.erase(std::unique(activeSessions.begin(), activeSessions.end()),
+                         activeSessions.end());
+    for (auto it = playerColorSlots_.begin(); it != playerColorSlots_.end();) {
+        if (!std::binary_search(activeSessions.begin(), activeSessions.end(), it->first))
+            it = playerColorSlots_.erase(it);
+        else
+            ++it;
+    }
+    std::array<bool, 128> occupiedColorSlots{};
+    for (const auto &[sessionId, slot] : playerColorSlots_) {
+        (void)sessionId;
+        if (slot < occupiedColorSlots.size()) occupiedColorSlots[slot] = true;
+    }
+    for (const std::uint64_t sessionId : activeSessions) {
+        if (playerColorSlots_.contains(sessionId)) continue;
+        const auto freeSlot = std::find(occupiedColorSlots.begin(), occupiedColorSlots.end(), false);
+        if (freeSlot == occupiedColorSlots.end()) break;
+        const std::size_t slot = static_cast<std::size_t>(freeSlot - occupiedColorSlots.begin());
+        playerColorSlots_.emplace(sessionId, slot);
+        *freeSlot = true;
+    }
     for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
         if (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId() &&
             !remote.displayName.empty()) {
@@ -564,12 +712,26 @@ void GameClient::DrawFrame() {
                        SHADER_UNIFORM_VEC3);
     }
 
-    // A sunlit blue-green baseplate keeps the scene readable against the sky.
-    DrawCubeV(Vector3{0.0f, -kGroundThickness * 0.5f, 0.0f},
-              Vector3{kGroundHalfExtent * 2.0f, kGroundThickness,
-                      kGroundHalfExtent * 2.0f}, Color{126, 164, 139, 255});
+    if (!publishedWorld_.HasParts()) {
+        // Keep the guest and metadata-only test scene readable when no Studio
+        // map has been published for this world id.
+        DrawCubeV(Vector3{0.0f, -kGroundThickness * 0.5f, 0.0f},
+                  Vector3{kGroundHalfExtent * 2.0f, kGroundThickness,
+                          kGroundHalfExtent * 2.0f}, Color{126, 164, 139, 255});
+    } else {
+        for (const auto &part : publishedWorld_.Parts()) {
+            if (!part.visible) continue;
+            const Vector3 size{std::max(0.01f, part.size.x), std::max(0.01f, part.size.y),
+                               std::max(0.01f, part.size.z)};
+            if (part.kind == "sphere") {
+                DrawSphere(part.position, std::max({size.x, size.y, size.z}) * 0.5f, part.color);
+            } else {
+                DrawCubeV(part.position, size, part.color);
+            }
+        }
+    }
 
-    const Color characterTint = PlayerColorForSession(networkClient_.SessionId(), orderedSessions);
+    const Color characterTint = PlayerColorForSession(networkClient_.SessionId(), playerColorSlots_);
     if (characterModelsReady_) {
         DrawLitCharacter(&characterCylinderModel_, &characterSphereModel_, playerPosition,
                          Player::kHalfHeightOfCylinder, characterTint);
@@ -621,7 +783,7 @@ void GameClient::DrawFrame() {
         }
 
         const Vector3 remotePosition{remote.x, remote.y, remote.z};
-        const Color remoteTint = PlayerColorForSession(remote.sessionId, orderedSessions);
+        const Color remoteTint = PlayerColorForSession(remote.sessionId, playerColorSlots_);
         if (characterModelsReady_) {
             DrawLitCharacter(&characterCylinderModel_, &characterSphereModel_, remotePosition,
                              Player::kHalfHeightOfCylinder, remoteTint);
@@ -660,6 +822,10 @@ void GameClient::DrawFrame() {
         DrawLine(centerX + 5, centerY, centerX + 12, centerY, Color{224, 238, 248, 150});
         DrawLine(centerX, centerY - 12, centerX, centerY - 5, Color{224, 238, 248, 150});
         DrawLine(centerX, centerY + 5, centerX, centerY + 12, Color{224, 238, 248, 150});
+    }
+    publishedWorld_.DrawGui(GetScreenWidth(), GetScreenHeight(), font);
+    if (networkClient_.HasDisconnectNotice()) {
+        DrawDisconnectDialog(font, networkClient_.DisconnectReason());
     }
     EndDrawing();
 }

@@ -15,8 +15,8 @@ constexpr float kGroundTolerance = 0.24f;
 
 } // namespace
 
-Player::Player(PhysicsWorld &physicsWorld) : physicsWorld_(physicsWorld) {
-    bodyId_ = physicsWorld_.CreateDynamicCapsule(JPH::RVec3(0.0, 3.0, 0.0),
+Player::Player(PhysicsWorld &physicsWorld, const JPH::RVec3 &spawnPosition) : physicsWorld_(physicsWorld) {
+    bodyId_ = physicsWorld_.CreateDynamicCapsule(spawnPosition,
                                                   kHalfHeightOfCylinder, kRadius, 75.0f);
 }
 

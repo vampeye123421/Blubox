@@ -23,6 +23,14 @@ struct NetworkPlayerSnapshot {
     float z = 0.0f;
 };
 
+enum class DisconnectKind {
+    None,
+    ConnectionLost,
+    Kicked,
+    JoinRejected,
+    ConnectionFailed
+};
+
 class NetworkClient {
 public:
     NetworkClient() = default;
@@ -41,6 +49,8 @@ public:
     const std::string &UserId() const noexcept { return userId_; }
     std::uint64_t SessionId() const noexcept { return sessionId_; }
     bool UserVerified() const noexcept { return userVerified_; }
+    DisconnectKind DisconnectReason() const noexcept { return disconnectKind_; }
+    bool HasDisconnectNotice() const noexcept { return disconnectKind_ != DisconnectKind::None; }
 
 private:
     bool SendJoinHandshake();
@@ -58,4 +68,5 @@ private:
     double nextPositionSendTime_ = 0.0;
     bool authenticated_ = false;
     bool enetInitialized_ = false;
+    DisconnectKind disconnectKind_ = DisconnectKind::None;
 };

@@ -1,6 +1,7 @@
 #include "ProtocolLaunchData.hpp"
 
 #include <cctype>
+#include <charconv>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -155,6 +156,17 @@ ProtocolLaunchData ParseBluboxUri(const std::string &url) {
                     throw std::invalid_argument("The blubox:// URL specifies conflicting world IDs.");
                 }
                 data.worldId = value;
+            } else if (key == "localserverport") {
+                if (data.localServerPort.has_value()) {
+                    throw std::invalid_argument("The blubox:// URL contains multiple local server ports.");
+                }
+                unsigned int port = 0;
+                const auto parsed = std::from_chars(value.data(), value.data() + value.size(), port);
+                if (value.empty() || parsed.ec != std::errc{} ||
+                    parsed.ptr != value.data() + value.size() || port == 0 || port > 65535) {
+                    throw std::invalid_argument("The localServerPort must be between 1 and 65535.");
+                }
+                data.localServerPort = static_cast<std::uint16_t>(port);
             }
         }
 

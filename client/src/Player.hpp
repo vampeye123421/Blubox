@@ -4,7 +4,8 @@
 
 class Player {
 public:
-    explicit Player(PhysicsWorld &physicsWorld);
+    explicit Player(PhysicsWorld &physicsWorld,
+                    const JPH::RVec3 &spawnPosition = JPH::RVec3(0.0, 3.0, 0.0));
 
     void Update(float deltaSeconds, float cameraYaw);
     JPH::Vec3 Position();

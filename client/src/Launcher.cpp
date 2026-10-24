@@ -865,7 +865,7 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
 
     if (needInstall) {
 #ifdef _WIN32
-        SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
+        SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_HIGHDPI);
         InitWindow(960, 594, "Blubox Installer");
         if (!IsWindowReady()) throw std::runtime_error("Could not open the Blubox installer window.");
         SetTargetFPS(60);
@@ -936,7 +936,7 @@ fs::path EnsureClientLauncherInstalled(const UpdateManifest &manifest, bool hasR
         const fs::path currentLauncher = ExecutablePath();
         const fs::path staging = fs::path(launcherPath.wstring() + L".tmp");
         fs::remove(staging);
-        SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
+        SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_HIGHDPI);
         InitWindow(960, 594, "Blubox Launcher Repair");
         if (!IsWindowReady()) throw std::runtime_error("Could not open the launcher repair window.");
         SetTargetFPS(60);
@@ -1056,7 +1056,7 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
     const bool needsUpdate = !cachedClientMatchesManifest || (hasRemoteManifest && remoteIsNewer);
 
     if (needsUpdate) {
-        SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_MSAA_4X_HINT | FLAG_WINDOW_HIGHDPI);
+        SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_HIGHDPI);
         InitWindow(960, 594, "Blubox Installer");
         if (!IsWindowReady()) throw std::runtime_error("Could not open the update window.");
         SetTargetFPS(60);

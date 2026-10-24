@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.2.10 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.2.11 LANGUAGES C CXX)
 if(WIN32)
     enable_language(RC)
 endif()
@@ -26,6 +26,8 @@ set(TARGET_VIEWER OFF CACHE BOOL "Build Jolt viewer" FORCE)
 set(TARGET_UNIT_TESTS OFF CACHE BOOL "Build Jolt unit tests" FORCE)
 set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "Build Jolt without link-time optimization" FORCE)
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "Use the standard dynamic MSVC runtime" FORCE)
+set(LUAU_BUILD_CLI OFF CACHE BOOL "Do not build Luau command line tools" FORCE)
+set(LUAU_BUILD_TESTS OFF CACHE BOOL "Do not build Luau tests" FORCE)
 
 FetchContent_Declare(
     raylib
@@ -54,7 +56,14 @@ FetchContent_Declare(
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
-FetchContent_MakeAvailable(raylib JoltPhysics enet nlohmann_json)
+FetchContent_Declare(
+    luau
+    GIT_REPOSITORY https://github.com/luau-lang/luau.git
+    GIT_TAG 0.743
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(raylib JoltPhysics enet nlohmann_json luau)
 
 add_executable(blubox_client
     src/ClientMain.cpp
@@ -65,6 +74,8 @@ add_executable(blubox_client
     src/ProtocolLaunchData.cpp
     src/PhysicsWorld.cpp
     src/Player.cpp
+    src/PublishedWorld.cpp
+    src/LocalScriptRuntime.cpp
     src/RaylibCompat.cpp
     src/GameClient.cpp
 )
@@ -108,7 +119,7 @@ target_include_directories(blubox_client PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     ${enet_SOURCE_DIR}/include
 )
-target_link_libraries(blubox_client PRIVATE raylib Jolt enet nlohmann_json::nlohmann_json)
+target_link_libraries(blubox_client PRIVATE raylib Jolt enet nlohmann_json::nlohmann_json Luau.Compiler Luau.VM)
 
 if(MSVC)
     target_compile_options(blubox_client PRIVATE /W4 /permissive-)
