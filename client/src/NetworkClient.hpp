@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ClientSession.hpp"
+#include "PresenceReporter.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,7 @@ struct NetworkPlayerSnapshot {
     std::uint64_t sessionId = 0;
     std::string userId;
     std::string displayName;
+    bool isVerified = false;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
@@ -38,6 +40,7 @@ public:
     const std::vector<NetworkPlayerSnapshot> &Players() const noexcept { return players_; }
     const std::string &UserId() const noexcept { return userId_; }
     std::uint64_t SessionId() const noexcept { return sessionId_; }
+    bool UserVerified() const noexcept { return userVerified_; }
 
 private:
     bool SendJoinHandshake();
@@ -49,6 +52,8 @@ private:
     const ClientSession *session_ = nullptr;
     std::string userId_;
     std::uint64_t sessionId_ = 0;
+    bool userVerified_ = false;
+    PresenceReporter presenceReporter_;
     std::vector<NetworkPlayerSnapshot> players_;
     double nextPositionSendTime_ = 0.0;
     bool authenticated_ = false;

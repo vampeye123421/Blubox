@@ -67,14 +67,17 @@ void DrawTextExSafe(const Font *font, const char *text, Vector2 position, float 
     }
 }
 
-Texture2D CreateNameplateTextureSafe(const Font *font, const char *text) {
+Texture2D CreateNameplateTextureSafe(const Font *font, const char *text, bool verified) {
     if (font == nullptr || text == nullptr || text[0] == '\0') return Texture2D{};
     constexpr float fontSize = 54.0f;
     constexpr float spacing = 1.0f;
     constexpr int paddingX = 16;
     constexpr int paddingY = 10;
     const Vector2 measured = MeasureTextEx(*font, text, fontSize, spacing);
-    const int width = static_cast<int>(measured.x) + paddingX * 2;
+    constexpr int badgeSize = 42;
+    constexpr int badgeGap = 12;
+    const int width = static_cast<int>(measured.x) + paddingX * 2 +
+                      (verified ? badgeGap + badgeSize : 0);
     const int height = static_cast<int>(measured.y) + paddingY * 2;
     Image image = GenImageColor(width, height, BLANK);
     if (image.data == nullptr) return Texture2D{};
@@ -93,6 +96,17 @@ Texture2D CreateNameplateTextureSafe(const Font *font, const char *text) {
     ImageDrawTextEx(&image, *font, text, Vector2{static_cast<float>(paddingX),
                                                  static_cast<float>(paddingY)},
                     fontSize, spacing, Color{250, 253, 255, 255});
+    if (verified) {
+        const int centerX = paddingX + static_cast<int>(measured.x) + badgeGap + badgeSize / 2;
+        const int centerY = height / 2;
+        ImageDrawCircle(&image, centerX, centerY, badgeSize / 2,
+                        Color{0, 210, 255, 255});
+        const Color check{255, 255, 255, 255};
+        ImageDrawLine(&image, centerX - 11, centerY, centerX - 2, centerY + 9, check);
+        ImageDrawLine(&image, centerX - 2, centerY + 9, centerX + 14, centerY - 11, check);
+        ImageDrawLine(&image, centerX - 10, centerY, centerX - 2, centerY + 8, check);
+        ImageDrawLine(&image, centerX - 2, centerY + 8, centerX + 13, centerY - 10, check);
+    }
     Texture2D texture = LoadTextureFromImage(image);
     UnloadImage(image);
     if (texture.id != 0) SetTextureFilter(texture, TEXTURE_FILTER_BILINEAR);

@@ -146,6 +146,8 @@ ProtocolLaunchData ParseBluboxUri(const std::string &url) {
 
             if (key == "token" || key == "session_token" || key == "sessiontoken") {
                 AssignUnique(data.sessionToken, value, "session token");
+            } else if (key == "presencetoken" || key == "presence_token") {
+                AssignUnique(data.presenceToken, value, "presence token");
             } else if (key == "world" || key == "world_id" || key == "worldid" ||
                        key == "place" || key == "place_id" || key == "placeid" ||
                        key == "game_id" || key == "gameid" || key == "id") {

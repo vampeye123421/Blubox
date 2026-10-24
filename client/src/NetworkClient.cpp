@@ -45,7 +45,7 @@ constexpr enet_uint8 kJoinHandshakeMessage = 0x01;
 constexpr enet_uint8 kClientPositionMessage = 0x02;
 constexpr enet_uint8 kJoinAcceptedMessage = 0x81;
 constexpr enet_uint8 kWorldSnapshotMessage = 0x82;
-constexpr enet_uint8 kProtocolVersion = 3;
+constexpr enet_uint8 kProtocolVersion = 4;
 constexpr std::size_t kMaxUserIdBytes = 256;
 constexpr std::size_t kMaxDisplayNameBytes = 64;
 constexpr std::size_t kMaxSnapshotPlayers = 128;
@@ -184,10 +184,14 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
         if (size < 12) return;
         sessionId_ = ReadU64(bytes + 2);
         const std::size_t idLength = ReadU16(bytes + 10);
-        if (sessionId_ == 0 || idLength == 0 || idLength > kMaxUserIdBytes ||
-            size != 12 + idLength) return;
-        userId_.assign(reinterpret_cast<const char *>(bytes + 12), idLength);
+        if (sessionId_ == 0 || idLength == 0 || idLength > kMaxUserIdBytes || size != 13 + idLength ||
+            bytes[12] > 1) return;
+        userVerified_ = bytes[12] != 0;
+        userId_.assign(reinterpret_cast<const char *>(bytes + 13), idLength);
         authenticated_ = true;
+        if (session_ != nullptr) {
+            presenceReporter_.Start(std::string(session_->PresenceToken()));
+        }
         TraceLog(LOG_INFO, "Handshake authenticated for player %s.", userId_.c_str());
         return;
     }
@@ -203,13 +207,15 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
     nextPlayers.reserve(count);
     std::size_t offset = 4;
     for (std::size_t index = 0; index < count; ++index) {
-        if (size - offset < 12) return;
+        if (size - offset < 13) return;
         const std::uint64_t sessionId = ReadU64(bytes + offset);
         const std::size_t idLength = ReadU16(bytes + offset + 8);
         const std::size_t nameLength = ReadU16(bytes + offset + 10);
-        offset += 12;
+        const enet_uint8 verifiedByte = bytes[offset + 12];
+        offset += 13;
         if (sessionId == 0 || idLength == 0 || idLength > kMaxUserIdBytes || nameLength == 0 ||
-            nameLength > kMaxDisplayNameBytes || size - offset < idLength + nameLength + 12) return;
+            nameLength > kMaxDisplayNameBytes || verifiedByte > 1 ||
+            size - offset < idLength + nameLength + 12) return;
 
         NetworkPlayerSnapshot player;
         player.sessionId = sessionId;
@@ -217,6 +223,7 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
         offset += idLength;
         player.displayName.assign(reinterpret_cast<const char *>(bytes + offset), nameLength);
         offset += nameLength;
+        player.isVerified = verifiedByte != 0;
         player.x = ReadFloat(bytes + offset);
         player.y = ReadFloat(bytes + offset + 4);
         player.z = ReadFloat(bytes + offset + 8);
@@ -281,6 +288,7 @@ bool NetworkClient::SendJoinHandshake() {
 }
 
 void NetworkClient::Shutdown() noexcept {
+    presenceReporter_.Stop();
     if (host_ != nullptr) {
         if (peer_ != nullptr && peer_->state == ENET_PEER_STATE_CONNECTED) {
             enet_peer_disconnect(peer_, 0);
@@ -304,6 +312,7 @@ void NetworkClient::Shutdown() noexcept {
     session_ = nullptr;
     userId_.clear();
     sessionId_ = 0;
+    userVerified_ = false;
     players_.clear();
     authenticated_ = false;
     if (enetInitialized_) {

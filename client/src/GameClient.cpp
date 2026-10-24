@@ -482,11 +482,13 @@ void GameClient::UpdateCamera() {
 void GameClient::DrawFrame() {
     const Vector3 playerPosition = ToRaylibVector(player_->Position());
     std::string localDisplayName = session_.HasToken() ? session_.DisplayName() : "Guest";
+    bool localVerified = networkClient_.UserVerified();
     const std::string &localUserId = networkClient_.UserId();
     for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
         if (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId() &&
             !remote.displayName.empty()) {
             localDisplayName = remote.displayName;
+            localVerified = remote.isVerified;
             break;
         }
     }
@@ -558,12 +560,13 @@ void GameClient::DrawFrame() {
     const Vector3 localNamePosition{playerPosition.x,
         playerPosition.y + Player::kHalfHeightOfCylinder + Player::kRadius + 0.18f,
         playerPosition.z};
-    const auto drawNameplate = [this, font](const std::string &name, Vector3 position) {
+    const auto drawNameplate = [this, font](const std::string &name, bool verified, Vector3 position) {
         if (name.empty()) return;
-        auto textureIt = nameplateTextures_.find(name);
+        const std::string textureKey = name + (verified ? "\x1fverified" : "\x1fplain");
+        auto textureIt = nameplateTextures_.find(textureKey);
         if (textureIt == nameplateTextures_.end()) {
-            Texture2D texture = CreateNameplateTextureSafe(font, name.c_str());
-            textureIt = nameplateTextures_.emplace(name, texture).first;
+            Texture2D texture = CreateNameplateTextureSafe(font, name.c_str(), verified);
+            textureIt = nameplateTextures_.emplace(textureKey, texture).first;
         }
         const Texture2D texture = textureIt->second;
         if (texture.id == 0 || texture.height <= 0) return;
@@ -580,7 +583,7 @@ void GameClient::DrawFrame() {
                              Vector2{labelWidth, labelHeight},
                              Vector2{labelWidth * 0.5f, labelHeight * 0.5f}, 0.0f, WHITE);
     };
-    drawNameplate(localDisplayName, localNamePosition);
+    drawNameplate(localDisplayName, localVerified, localNamePosition);
 
     for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
         if (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId()) {
@@ -603,7 +606,7 @@ void GameClient::DrawFrame() {
         const Vector3 labelPosition{remote.x,
             remote.y + Player::kHalfHeightOfCylinder + Player::kRadius + 0.18f,
             remote.z};
-        drawNameplate(remote.displayName, labelPosition);
+        drawNameplate(remote.displayName, remote.isVerified, labelPosition);
     }
 
     EndMode3D();

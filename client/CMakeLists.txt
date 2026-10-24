@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.2.7 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.2.9 LANGUAGES C CXX)
 if(WIN32)
     enable_language(RC)
 endif()
@@ -60,6 +60,7 @@ add_executable(blubox_client
     src/ClientMain.cpp
     src/ClientSession.cpp
     src/NetworkClient.cpp
+    src/PresenceReporter.cpp
     src/LaunchOptions.cpp
     src/ProtocolLaunchData.cpp
     src/PhysicsWorld.cpp
@@ -124,7 +125,7 @@ endif()
 
 if(WIN32)
     target_compile_definitions(blubox_client PRIVATE _WIN32_WINNT=0x0600)
-    target_link_libraries(blubox_client PRIVATE winmm)
+    target_link_libraries(blubox_client PRIVATE winmm winhttp)
     target_sources(blubox_client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxIcon.rc")
 endif()
 if(WIN32 AND MINGW)
