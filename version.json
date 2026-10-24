@@ -15,6 +15,6 @@
   "studioLauncherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.6/blubox_studio_launcher.exe",
   "studioLauncherSha256": "d359cef0b3494c6b930e691a4c275a1d749ac920fc1dc658a3cd164a42dd29c2",
   "studioLauncherVersion": "0.2.6",
-  "setupDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.8/Blubox-Setup.exe",
-  "setupSha256": "37e86a7ce740ede747dd3a415f133e64aa780ae57ab93222033e17f7a3b46570"
+  "setupDownloadUrl": "https://raw.githubusercontent.com/vampeye123421/Blubox/main/bin/Blubox-Setup.exe",
+  "setupSha256": "63233fdbb0b3be15099467ef41cafa534deff160ed4b02cc1558b8a905f50a1a"
 }
