@@ -1,7 +1,7 @@
 {
-  "version": "0.2.8",
-  "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.8/BluboxClient.exe",
-  "sha256": "a0d170b23c6b3554d9a43cfd721fb7d890fa080a509d9f0a699dc84d9a55a211",
+  "version": "0.2.10",
+  "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.10/BluboxClient.exe",
+  "sha256": "eb19eaf240cf59615539024d75c26562bb8bfc4e293c3d8d7d1a77be3d726676",
   "studioVersion": "0.1.8",
   "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.8/BluboxStudio.exe",
   "studioSha256": "6a912bb5e0abe470c270acb631e35bed193bfac997260938b3e1fb30e12c188a",
