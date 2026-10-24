@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://blubox.runs-on.dev/schemas/luau-api-catalog-v1.json",
+  "title": "Blubox Luau API Catalog",
+  "type": "object",
+  "required": ["schemaVersion", "globals", "libraries", "dataTypes", "enums", "classes"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "generatedAt": {"type": "string"},
+    "source": {"type": "string"},
+    "globals": {"type": "array", "items": {"$ref": "#/$defs/entity"}},
+    "libraries": {"type": "array", "items": {"$ref": "#/$defs/entity"}},
+    "dataTypes": {"type": "array", "items": {"$ref": "#/$defs/entity"}},
+    "enums": {"type": "array", "items": {"$ref": "#/$defs/entity"}},
+    "classes": {"type": "array", "items": {"$ref": "#/$defs/entity"}}
+  },
+  "$defs": {
+    "entity": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"type": "string"},
+        "type": {"type": "string"},
+        "baseClass": {"type": "string"},
+        "category": {"type": "string"},
+        "documentation": {"type": "string"},
+        "context": {"type": "array", "items": {"type": "string"}},
+        "members": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+        "functions": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+        "constructors": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+        "constants": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+        "properties": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+        "methods": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+        "events": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+        "callbacks": {"type": "array", "items": {"$ref": "#/$defs/member"}},
+        "items": {"type": "array", "items": {"$ref": "#/$defs/member"}}
+      },
+      "additionalProperties": true
+    },
+    "member": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"type": "string"},
+        "type": {"type": "string"},
+        "signature": {"type": "string"},
+        "documentation": {"type": "string"},
+        "isStatic": {"type": "boolean"},
+        "deprecated": {"type": "boolean"},
+        "isDeprecated": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

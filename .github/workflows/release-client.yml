@@ -15,13 +15,6 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
 
-      - name: Check out Blubox Studio source
-        uses: actions/checkout@v4
-        with:
-          repository: vampeye123421/blubox-studio
-          ref: main
-          path: studio-source
-
       - name: Set up MinGW toolchain
         uses: msys2/setup-msys2@v2
         with:

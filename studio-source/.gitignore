@@ -1,0 +1,15 @@
+# Local builds and CMake dependencies
+build/
+build-*/
+dist/
+.deps/
+.cache/
+tools/catalog/roblox_docs_raw.json
+tools/catalog/roblox_api_catalog.json
+
+# IDE and operating system files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
