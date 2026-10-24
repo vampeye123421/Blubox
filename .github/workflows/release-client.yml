@@ -13,7 +13,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up MinGW toolchain
         uses: msys2/setup-msys2@v2
@@ -94,7 +94,7 @@ jobs:
             --notes 'Download Blubox Client and Studio with the unified installer.'
 
       - name: Publish updater manifest
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           CLIENT_SHA256: ${{ steps.checksums.outputs.client }}
           STUDIO_SHA256: ${{ steps.checksums.outputs.studio }}
