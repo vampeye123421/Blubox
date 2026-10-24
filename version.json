@@ -1,13 +1,13 @@
 {
   "version": "0.2.8",
-  "downloadUrl": "https://raw.githubusercontent.com/vampeye123421/Blubox/main/bin/BluboxClient.exe",
-  "sha256": "a0d170b23c6b3554d9a43cfd721fb7d890fa080a509d9f0a699dc84d9a55a211",
-  "studioVersion": "0.1.8",
-  "studioDownloadUrl": "https://raw.githubusercontent.com/vampeye123421/Blubox/main/bin/BluboxStudio.exe",
-  "studioSha256": "61135e5ab163a80596525ec5a87ce3ca204018830e77799afedc00f701e2d46b",
-  "studioFontUrl": "https://raw.githubusercontent.com/vampeye123421/Blubox/main/bin/InterVariable.ttf",
+  "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.8/BluboxClient.exe",
+  "sha256": "777c5cfb0c3cb3df20876f24396df1f75712494aff2b2ff6ad4bcda36ec38bba",
+  "studioVersion": "0.1.6",
+  "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.8/BluboxStudio.exe",
+  "studioSha256": "f537da67b0d74942b76829b1a3194909ab900eab213d9cecd73d311947cfb0df",
+  "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.8/InterVariable.ttf",
   "studioFontSha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf",
-  "studioCodeFontUrl": "https://raw.githubusercontent.com/vampeye123421/Blubox/main/bin/JetBrainsMonoRegular.ttf",
+  "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.8/JetBrainsMonoRegular.ttf",
   "studioCodeFontSha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
   "launcherVersion": "0.2.6",
   "launcherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.6/blubox_launcher.exe",
@@ -15,6 +15,6 @@
   "studioLauncherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.6/blubox_studio_launcher.exe",
   "studioLauncherSha256": "d359cef0b3494c6b930e691a4c275a1d749ac920fc1dc658a3cd164a42dd29c2",
   "studioLauncherVersion": "0.2.6",
-  "setupDownloadUrl": "https://raw.githubusercontent.com/vampeye123421/Blubox/main/bin/Blubox-Setup.exe",
-  "setupSha256": "2a1e7a350159b3475b32d1126bcd6b97d0716cddf04d97f0ec6b270b9b8450cb"
+  "setupDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.8/Blubox-Setup.exe",
+  "setupSha256": "e2314f754d13198a663d24501141b1eeb8a2ce3fdd592e2506503795a38cd91f"
 }
