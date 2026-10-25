@@ -1,4 +1,5 @@
 #include "RaylibCompat.hpp"
+#include "BluboxVerifiedBadge.hpp"
 
 #include <initializer_list>
 #include <raylib.h>
@@ -99,14 +100,17 @@ Texture2D CreateNameplateTextureSafe(const Font *font, const char *text, bool ve
     if (verified) {
         const int centerX = paddingX + static_cast<int>(measured.x) + badgeGap + badgeSize / 2;
         const int centerY = height / 2;
-        // Cyan verification mark, matching assets/branding/verified-badge.svg.
-        ImageDrawCircle(&image, centerX, centerY, badgeSize / 2,
-                        Color{0, 190, 245, 255});
-        const Color check{255, 255, 255, 255};
-        ImageDrawLine(&image, centerX - 11, centerY, centerX - 2, centerY + 9, check);
-        ImageDrawLine(&image, centerX - 2, centerY + 9, centerX + 14, centerY - 11, check);
-        ImageDrawLine(&image, centerX - 10, centerY, centerX - 2, centerY + 8, check);
-        ImageDrawLine(&image, centerX - 2, centerY + 8, centerX + 13, centerY - 10, check);
+        Image badge = LoadImageFromMemory(".png", blubox::kVerifiedBadgeData,
+                                          blubox::kVerifiedBadgeDataSize);
+        if (badge.data != nullptr) {
+            const Rectangle source{0.0f, 0.0f, static_cast<float>(badge.width),
+                                   static_cast<float>(badge.height)};
+            const Rectangle destination{static_cast<float>(centerX - badgeSize / 2),
+                                        static_cast<float>(centerY - badgeSize / 2),
+                                        static_cast<float>(badgeSize), static_cast<float>(badgeSize)};
+            ImageDraw(&image, badge, source, destination, WHITE);
+            UnloadImage(badge);
+        }
     }
     Texture2D texture = LoadTextureFromImage(image);
     UnloadImage(image);

@@ -248,6 +248,7 @@ void MapDocument::Validate() const {
         if (entity.kind != "block" && entity.kind != "sphere" && entity.kind != "wedgepart" &&
             entity.kind != "cornerwedgepart" && entity.kind != "model" && entity.kind != "folder" && entity.kind != "spawnlocation" &&
             entity.kind != "remoteevent" && entity.kind != "remotefunction" && entity.kind != "meshpart" && entity.kind != "decal" &&
+            entity.kind != "shirt" && entity.kind != "pants" && entity.kind != "accessory" &&
             entity.kind != "script" && entity.kind != "localscript" && entity.kind != "screengui" &&
             entity.kind != "frame" && entity.kind != "textlabel" && entity.kind != "textbutton") {
             throw std::runtime_error("Unsupported object kind.");

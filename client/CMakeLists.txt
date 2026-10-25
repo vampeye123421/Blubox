@@ -114,6 +114,23 @@ add_custom_command(
 )
 target_sources(blubox_client PRIVATE "${BLUBOX_RUNTIME_ICON_HEADER}")
 
+set(BLUBOX_VERIFIED_BADGE_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxVerifiedBadge.hpp")
+add_custom_command(
+    OUTPUT "${BLUBOX_VERIFIED_BADGE_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/verified-badge.png"
+            "-DOUTPUT_FILE=${BLUBOX_VERIFIED_BADGE_HEADER}"
+            "-DSYMBOL_NAME=kVerifiedBadgeData"
+            "-DSIZE_SYMBOL_NAME=kVerifiedBadgeDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/verified-badge.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+target_sources(blubox_client PRIVATE "${BLUBOX_VERIFIED_BADGE_HEADER}")
+
 target_include_directories(blubox_client PRIVATE
     src
     "${CMAKE_CURRENT_BINARY_DIR}/generated"

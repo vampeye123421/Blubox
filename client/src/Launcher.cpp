@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <iomanip>
 #include <iterator>
 #include <memory>
@@ -863,6 +864,9 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
         !fileMatches(studioLauncherPath, manifest.studioLauncherSha256);
     const bool needInstall = needStudio || needInterfaceFont || needCodeFont || needStudioLauncher;
 
+    LogLauncherDiagnostic("Studio bootstrap: target=" + manifest.studioVersion +
+        ", installed=" + installedVersion + ", update=" + (needInstall ? "yes" : "no"));
+
     if (needInstall) {
 #ifdef _WIN32
         SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_HIGHDPI);
@@ -886,6 +890,7 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
             fs::rename(staging, destination);
         };
         try {
+            LogLauncherDiagnostic("Studio bootstrap: downloading or repairing Studio files.");
             if (needStudio) downloadVerified(manifest.studioDownloadUrl, manifest.studioSha256,
                                               studioPath, "Blubox Studio");
             if (needInterfaceFont) downloadVerified(manifest.studioFontUrl, manifest.studioFontSha256,
@@ -896,8 +901,31 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
                                                       manifest.studioLauncherSha256,
                                                       studioLauncherPath, "launcher Studio");
             CloseSplashWindow();
+            LogLauncherDiagnostic("Studio bootstrap: repair completed.");
+        } catch (const std::exception &error) {
+            CloseSplashWindow();
+            for (const fs::path &destination : {studioPath, interfaceFont, codeFont, studioLauncherPath}) {
+                std::error_code removeError;
+                fs::remove(fs::path(destination.wstring() + L".tmp"), removeError);
+            }
+            LogLauncherDiagnostic(std::string("Studio update failed: ") + error.what());
+
+            const bool previousStudioIsUsable = !installedVersion.empty() && fs::exists(oldStudio) &&
+                fs::exists(oldVersionDirectory / "assets/editor/fonts/InterVariable.ttf") &&
+                fs::exists(oldVersionDirectory / "assets/editor/fonts/JetBrainsMono-Regular.ttf");
+            if (!previousStudioIsUsable) {
+                throw std::runtime_error(std::string("Blubox Studio could not be updated and no working installed copy is available. ") +
+                    error.what() + " Download the current Blubox setup from the official website and run it to repair Studio.");
+            }
+
+            LogLauncherDiagnostic("Continuing with the last working Studio version " + installedVersion + ".");
+            return oldStudio;
         } catch (...) {
             CloseSplashWindow();
+            for (const fs::path &destination : {studioPath, interfaceFont, codeFont, studioLauncherPath}) {
+                std::error_code removeError;
+                fs::remove(fs::path(destination.wstring() + L".tmp"), removeError);
+            }
             throw;
         }
 #else
@@ -967,7 +995,30 @@ fs::path EnsureClientLauncherInstalled(const UpdateManifest &manifest, bool hasR
 
 } // namespace
 
+void LogLauncherDiagnostic(std::string_view message) noexcept {
+    const char *enabled = std::getenv("BLUBOX_UPDATER_DEBUG");
+    if (enabled == nullptr || std::string_view(enabled) != "1") return;
+    try {
+#ifdef _WIN32
+        const wchar_t *localAppData = _wgetenv(L"LOCALAPPDATA");
+        if (localAppData != nullptr && *localAppData != L'\0') {
+            const fs::path logDirectory = fs::path(localAppData) / L"Blubox" / L"logs";
+            fs::create_directories(logDirectory);
+            std::ofstream output(logDirectory / L"launcher-debug.log", std::ios::binary | std::ios::app);
+            if (output) {
+                for (const char ch : message) output.put(ch == '\r' || ch == '\n' ? ' ' : ch);
+                output.put('\n');
+            }
+        }
+#endif
+        std::cout << "[updater] " << message << '\n';
+    } catch (...) {
+        // Debug logging must not affect update or launch behavior.
+    }
+}
+
 int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
+    LogLauncherDiagnostic(std::string("Starting ") + (options.launchStudio ? "Studio" : "client") + " update flow.");
     const fs::path launcherDirectory = ExecutablePath().parent_path();
     const fs::path installRoot = InstallRoot();
     std::ifstream installedVersionFile(installRoot / (options.launchStudio ? "installed_studio_version.txt" : "installed_version.txt"));
@@ -982,12 +1033,16 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
     bool hasRemoteManifest = false;
 #ifdef _WIN32
     try {
+        LogLauncherDiagnostic("Reading the update manifest over HTTPS.");
         const char *configuredUrl = std::getenv("BLUBOX_MANIFEST_URL");
         const std::string manifestUrl = AddManifestCacheBuster(
             configuredUrl != nullptr && *configuredUrl != '\0' ? configuredUrl : kManifestUrl);
         manifest = ParseUpdateManifest(ReadHttpsText(manifestUrl));
         hasRemoteManifest = true;
-    } catch (const std::exception &) {
+        LogLauncherDiagnostic("Manifest received: client=" + manifest.version + ", Studio=" + manifest.studioVersion +
+            ", launcher=" + manifest.launcherVersion + ".");
+    } catch (const std::exception &error) {
+        LogLauncherDiagnostic(std::string("Manifest request failed: ") + error.what());
         // Existing installs remain launchable offline. The sidecar manifest
         // and executable can also advance a local development install.
         if (hasPreviousInstall) {
@@ -1014,6 +1069,7 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
 #endif
 
     if (options.launchStudio) {
+        LogLauncherDiagnostic("Preparing the Studio executable.");
         const fs::path studio = EnsureStudioInstalled(manifest, hasRemoteManifest, installRoot, true);
         const std::string studioLauncherVersion = manifest.studioLauncherVersion.empty()
             ? manifest.studioVersion : manifest.studioLauncherVersion;
@@ -1021,13 +1077,20 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
         const fs::path clientLauncher = installRoot / "launchers" / manifest.launcherVersion;
         PruneVersionDirectories(installRoot / "launchers",
             {ExecutablePath().parent_path(), studioLauncher, clientLauncher});
+        LogLauncherDiagnostic("Starting Studio: " + studio.string());
         StartClient(studio, argc, argv);
         return 0;
     }
 
     // The game launcher bootstraps and repairs Studio before starting the game.
     // The dedicated Studio launcher uses the same feed but skips this bootstrap.
-    (void)EnsureStudioInstalled(manifest, hasRemoteManifest, installRoot, true);
+    // Studio is bundled with the platform, but a stale or unavailable Studio
+    // release must not prevent an already-installed game client from starting.
+    try {
+        (void)EnsureStudioInstalled(manifest, hasRemoteManifest, installRoot, true);
+    } catch (const std::exception &error) {
+        LogLauncherDiagnostic(std::string("Studio bootstrap was skipped; continuing with the client: ") + error.what());
+    }
     const fs::path installedLauncher = EnsureClientLauncherInstalled(manifest, hasRemoteManifest, installRoot);
     const std::string studioLauncherVersion = manifest.studioLauncherVersion.empty()
         ? manifest.studioVersion : manifest.studioLauncherVersion;
@@ -1054,6 +1117,8 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
         }
     }
     const bool needsUpdate = !cachedClientMatchesManifest || (hasRemoteManifest && remoteIsNewer);
+    LogLauncherDiagnostic("Client update decision: target=" + targetVersion + ", installed=" + installedVersion +
+        ", update=" + (needsUpdate ? "yes" : "no") + ".");
 
     if (needsUpdate) {
         SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_HIGHDPI);
@@ -1067,10 +1132,12 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
             fs::remove(stagingClient);
             if (hasRemoteManifest && !manifest.downloadUrl.empty()) {
 #ifdef _WIN32
+                LogLauncherDiagnostic("Downloading the client executable.");
                 DownloadHttpsFile(manifest.downloadUrl, stagingClient);
                 if (Sha256File(stagingClient) != manifest.sha256) {
                     throw std::runtime_error("The downloaded client SHA-256 checksum does not match.");
                 }
+                LogLauncherDiagnostic("Client download and SHA-256 verification completed.");
 #else
                 throw std::runtime_error("Automatic downloads are available only on Windows.");
 #endif
@@ -1081,8 +1148,25 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
             fs::rename(stagingClient, installedClient);
             DrawProgress(1.0f, "Starting Blubox...", 0, 0, 0.0);
             CloseSplashWindow();
+        } catch (const std::exception &error) {
+            CloseSplashWindow();
+            std::error_code removeError;
+            fs::remove(stagingClient, removeError);
+            LogLauncherDiagnostic(std::string("Client update failed: ") + error.what());
+            if (!hasPreviousInstall || !fs::exists(previouslyInstalledClient)) {
+                throw std::runtime_error(std::string("The Blubox update could not be downloaded or verified, and no installed client is available. ") +
+                    error.what() + " Please try again later or run the current setup from the official website.");
+            }
+            installedClient = previouslyInstalledClient;
+            LogLauncherDiagnostic("Starting the last working client version " + installedVersion + " instead.");
+#ifndef _WIN32
+            std::cerr << "Blubox update failed; starting installed version " << installedVersion
+                      << " instead: " << error.what() << '\n';
+#endif
         } catch (...) {
             CloseSplashWindow();
+            std::error_code removeError;
+            fs::remove(stagingClient, removeError);
             throw;
         }
     }
@@ -1100,6 +1184,7 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
     CreateBluboxClientShortcuts(installedLauncher);
     RegisterBluboxClientUninstaller(installedLauncher, targetVersion);
 #endif
+    LogLauncherDiagnostic("Starting client: " + installedClient.string());
     StartClient(installedClient, argc, argv);
     return 0;
 }
