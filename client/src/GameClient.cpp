@@ -126,45 +126,48 @@ Color AvatarColor(std::string_view value, Color fallback) {
                  static_cast<unsigned char>(rgb & 0xff), 255};
 }
 
-void DrawAvatar(Vector3 center, const NetworkPlayerSnapshot& appearance, Color identityTint) {
+void DrawAvatar(Vector3 center, const NetworkPlayerSnapshot& appearance, Color identityTint,
+                float facingYaw = 0.0f) {
     const Color skin = AvatarColor(appearance.bodyColor, identityTint);
     const Color shirt = AvatarColor(appearance.shirtColor, Color{34, 184, 207, 255});
     const Color pants = AvatarColor(appearance.pantsColor, Color{51, 75, 120, 255});
-    DrawCubeV({center.x, center.y + 0.34f, center.z}, {0.76f, 0.88f, 0.38f}, shirt);
-    DrawSphere({center.x, center.y + 1.02f, center.z}, 0.27f, skin);
-    DrawCubeV({center.x - 0.50f, center.y + 0.35f, center.z}, {0.22f, 0.68f, 0.24f}, skin);
-    DrawCubeV({center.x + 0.50f, center.y + 0.35f, center.z}, {0.22f, 0.68f, 0.24f}, skin);
-    DrawCubeV({center.x - 0.20f, center.y - 0.39f, center.z}, {0.31f, 0.72f, 0.32f}, pants);
-    DrawCubeV({center.x + 0.20f, center.y - 0.39f, center.z}, {0.31f, 0.72f, 0.32f}, pants);
+    // Rotate the whole avatar around its feet so its front follows the view yaw.
+    // The model's authored front is +Z, while yaw 0 looks toward -Z.
+    rlPushMatrix();
+    rlTranslatef(center.x, center.y, center.z);
+    rlRotatef((facingYaw + PI) * RAD2DEG, 0.0f, 1.0f, 0.0f);
+    DrawCubeV({0.0f, 0.34f, 0.0f}, {0.76f, 0.88f, 0.38f}, shirt);
+    DrawSphere({0.0f, 1.02f, 0.0f}, 0.27f, skin);
+    DrawCubeV({-0.50f, 0.35f, 0.0f}, {0.22f, 0.68f, 0.24f}, skin);
+    DrawCubeV({0.50f, 0.35f, 0.0f}, {0.22f, 0.68f, 0.24f}, skin);
+    DrawCubeV({-0.20f, -0.39f, 0.0f}, {0.31f, 0.72f, 0.32f}, pants);
+    DrawCubeV({0.20f, -0.39f, 0.0f}, {0.31f, 0.72f, 0.32f}, pants);
     for (const std::string& accessory : appearance.accessories) {
         if (accessory == "cap-blue") {
-            DrawCylinder({center.x, center.y + 1.30f, center.z}, 0.28f, 0.25f, 0.12f, 12, Color{76, 141, 255, 255});
-            DrawCubeV({center.x, center.y + 1.25f, center.z + 0.18f}, {0.36f, 0.06f, 0.24f}, Color{55, 116, 233, 255});
+            DrawCylinder({0.0f, 1.30f, 0.0f}, 0.28f, 0.25f, 0.12f, 12, Color{76, 141, 255, 255});
+            DrawCubeV({0.0f, 1.25f, 0.18f}, {0.36f, 0.06f, 0.24f}, Color{55, 116, 233, 255});
         } else if (accessory == "backpack-cyan") {
-            DrawCubeV({center.x, center.y + 0.34f, center.z - 0.26f}, {0.48f, 0.52f, 0.22f}, Color{34, 184, 207, 255});
+            DrawCubeV({0.0f, 0.34f, -0.26f}, {0.48f, 0.52f, 0.22f}, Color{34, 184, 207, 255});
         } else if (accessory == "halo-cyan") {
-            DrawCylinder({center.x, center.y + 1.36f, center.z}, 0.33f, 0.33f, 0.045f, 24, Color{114, 228, 239, 255});
+            DrawCylinder({0.0f, 1.36f, 0.0f}, 0.33f, 0.33f, 0.045f, 24, Color{114, 228, 239, 255});
         }
     }
+    rlPopMatrix();
 }
 
 struct DisconnectDialogLayout {
     Rectangle panel{};
     Rectangle leave{};
-    Rectangle reconnect{};
 };
 
 DisconnectDialogLayout GetDisconnectDialogLayout() {
     const float width = std::min(440.0f, static_cast<float>(GetScreenWidth()) - 32.0f);
-    constexpr float height = 222.0f;
+    constexpr float height = 248.0f;
     const float x = (static_cast<float>(GetScreenWidth()) - width) * 0.5f;
     const float y = (static_cast<float>(GetScreenHeight()) - height) * 0.5f;
-    constexpr float gap = 10.0f;
-    const float buttonWidth = (width - 32.0f - gap) * 0.5f;
     return {
         Rectangle{x, y, width, height},
-        Rectangle{x + 16.0f, y + height - 52.0f, buttonWidth, 36.0f},
-        Rectangle{x + 16.0f + buttonWidth + gap, y + height - 52.0f, buttonWidth, 36.0f}
+        Rectangle{x + 24.0f, y + height - 62.0f, width - 48.0f, 42.0f}
     };
 }
 
@@ -179,44 +182,39 @@ void DrawDisconnectDialog(const Font *font, DisconnectKind reason) {
     const float centerX = layout.panel.x + layout.panel.width * 0.5f;
     const Vector2 mouse = GetMousePosition();
     const bool leaveHover = CheckCollisionPointRec(mouse, layout.leave);
-    const bool reconnectHover = CheckCollisionPointRec(mouse, layout.reconnect);
 
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, 142});
-    DrawRectangleRounded(layout.panel, 0.055f, 12, Color{55, 58, 61, 255});
-    DrawLineEx(Vector2{layout.panel.x + 18.0f, layout.panel.y + 54.0f},
-               Vector2{layout.panel.x + layout.panel.width - 18.0f, layout.panel.y + 54.0f},
-               1.0f, Color{218, 220, 222, 210});
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{5, 12, 20, 178});
+    DrawRectangleRounded(layout.panel, 0.075f, 16, Color{20, 30, 42, 255});
+    DrawRectangleRounded(Rectangle{layout.panel.x, layout.panel.y, layout.panel.width, 5.0f},
+                         0.2f, 8, Color{44, 202, 220, 255});
+    DrawLineEx(Vector2{layout.panel.x + 22.0f, layout.panel.y + 58.0f},
+               Vector2{layout.panel.x + layout.panel.width - 22.0f, layout.panel.y + 58.0f},
+               1.0f, Color{65, 82, 99, 255});
 
-    const char *message = "Please check your internet connection and try again.";
-    const char *code = "(Error Code: 277)";
+    const char *message = "Connection to the Blubox server was interrupted.";
+    const char *code = "BLX-1001  ·  Connection lost";
     if (reason == DisconnectKind::Kicked) {
-        message = "You were kicked from this server.";
-        code = "(Error Code: 267)";
+        message = "The server ended your session.";
+        code = "BLX-1002  ·  Session ended";
     } else if (reason == DisconnectKind::JoinRejected) {
-        message = "The server couldn't verify this join.";
-        code = "(Error Code: 273)";
+        message = "Blubox couldn't validate your join request.";
+        code = "BLX-1003  ·  Join not accepted";
     } else if (reason == DisconnectKind::ConnectionFailed) {
-        message = "Couldn't connect. Check that the server is running.";
-        code = "(Error Code: 279)";
+        message = "Couldn't reach this Blubox server.";
+        code = "BLX-1004  ·  Server unavailable";
     }
 
-    DrawCenteredText(font, "Disconnected", centerX, layout.panel.y + 16.0f, 22.0f,
-                     Color{250, 250, 250, 255});
-    DrawCenteredText(font, message, centerX, layout.panel.y + 75.0f, 17.0f,
-                     Color{215, 216, 217, 255});
-    DrawCenteredText(font, code, centerX, layout.panel.y + 101.0f, 16.0f,
-                     Color{215, 216, 217, 255});
+    DrawCenteredText(font, "Connection interrupted", centerX, layout.panel.y + 20.0f, 21.0f,
+                     Color{238, 246, 252, 255});
+    DrawCenteredText(font, message, centerX, layout.panel.y + 88.0f, 16.0f,
+                     Color{199, 214, 226, 255});
+    DrawCenteredText(font, code, centerX, layout.panel.y + 118.0f, 14.0f,
+                     Color{117, 183, 199, 255});
 
     DrawRectangleRounded(layout.leave, 0.18f, 8,
-                         leaveHover ? Color{76, 79, 82, 255} : Color{55, 58, 61, 255});
-    DrawRectangleRoundedLinesEx(layout.leave, 0.18f, 8, 1.0f, Color{205, 207, 209, 255});
-    DrawCenteredText(font, "Leave", layout.leave.x + layout.leave.width * 0.5f,
-                     layout.leave.y + 8.0f, 16.0f, Color{235, 236, 237, 255});
-
-    DrawRectangleRounded(layout.reconnect, 0.18f, 8,
-                         reconnectHover ? Color{245, 246, 247, 255} : Color{255, 255, 255, 255});
-    DrawCenteredText(font, "Reconnect", layout.reconnect.x + layout.reconnect.width * 0.5f,
-                     layout.reconnect.y + 8.0f, 16.0f, Color{44, 47, 50, 255});
+                         leaveHover ? Color{75, 220, 231, 255} : Color{42, 192, 210, 255});
+    DrawCenteredText(font, "Leave server", centerX, layout.leave.y + 10.0f, 16.0f,
+                     Color{8, 24, 33, 255});
 }
 
 float HashNoise(int x, int y, int z) {
@@ -591,15 +589,15 @@ void GameClient::Update(float deltaSeconds) {
     if (networkClient_.HasDisconnectNotice()) {
         mouseCaptured_ = false;
         EnableCursor();
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) ||
+            IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
             const auto layout = GetDisconnectDialogLayout();
             const Vector2 mouse = GetMousePosition();
             if (CheckCollisionPointRec(mouse, layout.leave)) {
                 running_ = false;
-            } else if (CheckCollisionPointRec(mouse, layout.reconnect)) {
-                networkClient_.Connect(session_);
             }
         }
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) running_ = false;
         return;
     }
 
@@ -755,15 +753,17 @@ void GameClient::DrawFrame() {
     }
 
     const Color characterTint = PlayerColorForSession(networkClient_.SessionId(), playerColorSlots_);
-    DrawAvatar(playerPosition, localAppearance, characterTint);
+    DrawAvatar(playerPosition, localAppearance, characterTint, cameraYaw_);
 
     // Nameplates are textured billboards. Switch back to Raylib's default
     // texture shader after the lit world geometry so their glyph texture is sampled.
     if (lightingShader_.id != 0) EndShaderMode();
 
-    const Vector3 localNamePosition{playerPosition.x,
-        playerPosition.y + Player::kHalfHeightOfCylinder + Player::kRadius + 0.18f,
-        playerPosition.z};
+    // The rendered head's top is at playerY + 1.29. Keep the billboard's
+    // center high enough that its lower edge clears the head instead of
+    // clipping through it from the camera's angle.
+    const Vector3 localNamePosition{playerPosition.x, playerPosition.y + 1.62f,
+                                    playerPosition.z};
     const auto drawNameplate = [this, font](const std::string &name, bool verified, Vector3 position) {
         if (name.empty()) return;
         const std::string textureKey = name + (verified ? "\x1fverified" : "\x1fplain");
@@ -798,9 +798,7 @@ void GameClient::DrawFrame() {
         const Color remoteTint = PlayerColorForSession(remote.sessionId, playerColorSlots_);
         DrawAvatar(remotePosition, remote, remoteTint);
 
-        const Vector3 labelPosition{remote.x,
-            remote.y + Player::kHalfHeightOfCylinder + Player::kRadius + 0.18f,
-            remote.z};
+        const Vector3 labelPosition{remote.x, remote.y + 1.62f, remote.z};
         drawNameplate(remote.displayName, remote.isVerified, labelPosition);
     }
 
