@@ -110,6 +110,10 @@ bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
             asset.attachmentName = item["attachmentName"].get<std::string>();
             asset.clientStyle = item.value("clientStyle", std::string{});
             asset.color = item.value("color", std::string{"#4c8dff"});
+            asset.scale = item.value("scale", 1.0f);
+            asset.offsetX = item.value("offsetX", 0.0f);
+            asset.offsetY = item.value("offsetY", 0.0f);
+            asset.offsetZ = item.value("offsetZ", 0.0f);
             constexpr std::string_view path = "/storage/v1/object/public/marketplace-assets/";
             if (asset.id.size() > 64 || asset.assetUrl.size() > 2048 ||
                 !asset.assetUrl.starts_with("https://") || asset.assetUrl.find(path) == std::string::npos ||
@@ -120,7 +124,18 @@ bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
                 }) || asset.color.size() != 7 || asset.color.front() != '#' ||
                 !std::all_of(asset.color.begin() + 1, asset.color.end(), [](unsigned char c) {
                     return std::isxdigit(c) != 0;
-                })) return false;
+                }) || !std::isfinite(asset.scale) || asset.scale < 0.05f || asset.scale > 5.0f ||
+                !std::isfinite(asset.offsetX) || std::abs(asset.offsetX) > 3.0f ||
+                !std::isfinite(asset.offsetY) || std::abs(asset.offsetY) > 3.0f ||
+                !std::isfinite(asset.offsetZ) || std::abs(asset.offsetZ) > 3.0f) return false;
+            if (item.contains("textureAssetUrl") && !item["textureAssetUrl"].is_null()) {
+                if (!item["textureAssetUrl"].is_string()) return false;
+                asset.textureAssetUrl = item["textureAssetUrl"].get<std::string>();
+                if (asset.textureAssetUrl.size() > 2048 || !asset.textureAssetUrl.starts_with("https://") ||
+                    asset.textureAssetUrl.find(path) == std::string::npos ||
+                    asset.textureAssetUrl.find_first_of("\\\\\r\n") != std::string::npos ||
+                    asset.textureAssetUrl.find('@') != std::string::npos) return false;
+            }
             player.accessoryAssets.push_back(std::move(asset));
         }
         return true;

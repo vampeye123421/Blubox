@@ -21,6 +21,11 @@ struct NetworkPlayerSnapshot {
         std::string attachmentName;
         std::string clientStyle;
         std::string color;
+        std::string textureAssetUrl;
+        float scale = 1.0f;
+        float offsetX = 0.0f;
+        float offsetY = 0.0f;
+        float offsetZ = 0.0f;
     };
     std::uint64_t sessionId = 0;
     std::string userId;

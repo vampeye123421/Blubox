@@ -10,14 +10,23 @@
 class AvatarAssetCache {
 public:
     ~AvatarAssetCache();
-    void Draw(const NetworkPlayerSnapshot& avatar);
+    bool LoadBaseCharacter(const Shader& lightingShader);
+    bool DrawBaseCharacter(Vector3 feetPosition, const NetworkPlayerSnapshot& avatar,
+                           float facingYaw);
+    void Draw(const NetworkPlayerSnapshot& avatar, bool drawClothingOverlays = true);
     void Unload() noexcept;
 
 private:
     struct TextureEntry { Texture2D texture{}; bool attempted = false; };
-    struct ModelEntry { Model model{}; BoundingBox bounds{}; bool attempted = false; };
+    struct ModelEntry { Model model{}; BoundingBox bounds{}; bool attempted = false; bool hasExternalTexture = false; };
+    Model baseCharacter_{};
+    BoundingBox baseCharacterBounds_{};
+    std::unordered_map<std::string, int> baseCharacterMaterials_;
+    float baseCharacterScale_ = 1.0f;
+    bool baseCharacterLoaded_ = false;
     TextureEntry& texture(const std::string& url);
-    ModelEntry& model(const std::string& url);
+    TextureEntry& itemTexture(const std::string& url);
+    ModelEntry& model(const std::string& url, const std::string& textureUrl);
     std::unordered_map<std::string, TextureEntry> textures_;
     std::unordered_map<std::string, ModelEntry> models_;
 };

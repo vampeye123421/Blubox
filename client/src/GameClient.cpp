@@ -133,24 +133,31 @@ void DrawAvatar(Vector3 center, const NetworkPlayerSnapshot& appearance, Color i
     const Color skin = AvatarColor(appearance.bodyColor, identityTint);
     const Color shirt = AvatarColor(appearance.shirtColor, Color{34, 184, 207, 255});
     const Color pants = AvatarColor(appearance.pantsColor, Color{51, 75, 120, 255});
+    // The website avatar editor and the client share a feet-origin rig. Jolt's
+    // player position is the capsule center, so move the visual root down by
+    // the capsule half-height before drawing the matching proportions.
+    constexpr float kCharacterHalfHeight = Player::kHalfHeightOfCylinder + Player::kRadius;
+    const Vector3 feetPosition{center.x, center.y - kCharacterHalfHeight, center.z};
+    if (avatarAssets.DrawBaseCharacter(feetPosition, appearance, facingYaw)) return;
+
+    rlPushMatrix();
+    rlTranslatef(center.x, center.y - kCharacterHalfHeight, center.z);
     // Rotate the whole avatar around its feet so its front follows the view yaw.
     // The model's authored front is +Z, while yaw 0 looks toward -Z.
-    rlPushMatrix();
-    rlTranslatef(center.x, center.y, center.z);
     // The camera/player forward vector is (sin(yaw), 0, -cos(yaw));
     // rotating the authored +Z-facing avatar by PI-yaw matches that vector.
     rlRotatef((PI - facingYaw) * RAD2DEG, 0.0f, 1.0f, 0.0f);
-    DrawCubeV({0.0f, 0.34f, 0.0f}, {0.76f, 0.88f, 0.38f}, shirt);
+    DrawCubeV({0.0f, 1.25f, 0.0f}, {0.82f, 0.90f, 0.42f}, shirt);
     if (headSphereModel && headSphereModel->meshCount > 0) {
-        const Vector3 headPosition{0.0f, 1.02f, 0.0f};
-        DrawModelSafe(headSphereModel, &headPosition, 0.6f, &skin);
+        const Vector3 headPosition{0.0f, 1.93f, 0.0f};
+        DrawModelSafe(headSphereModel, &headPosition, 0.31f / Player::kRadius, &skin);
     } else {
-        DrawSphereEx({0.0f, 1.02f, 0.0f}, 0.27f, 32, 32, skin);
+        DrawSphereEx({0.0f, 1.93f, 0.0f}, 0.31f, 32, 32, skin);
     }
-    DrawCubeV({-0.50f, 0.35f, 0.0f}, {0.22f, 0.68f, 0.24f}, skin);
-    DrawCubeV({0.50f, 0.35f, 0.0f}, {0.22f, 0.68f, 0.24f}, skin);
-    DrawCubeV({-0.20f, -0.39f, 0.0f}, {0.31f, 0.72f, 0.32f}, pants);
-    DrawCubeV({0.20f, -0.39f, 0.0f}, {0.31f, 0.72f, 0.32f}, pants);
+    DrawCubeV({-0.57f, 1.28f, 0.0f}, {0.23f, 0.70f, 0.25f}, skin);
+    DrawCubeV({0.57f, 1.28f, 0.0f}, {0.23f, 0.70f, 0.25f}, skin);
+    DrawCubeV({-0.23f, 0.43f, 0.0f}, {0.34f, 0.75f, 0.34f}, pants);
+    DrawCubeV({0.23f, 0.43f, 0.0f}, {0.34f, 0.75f, 0.34f}, pants);
     // Render only published accessory assets. Legacy demo shapes are not
     // avatar inventory and must never appear as fabricated equipped items.
     avatarAssets.Draw(appearance);
@@ -471,6 +478,7 @@ int GameClient::Run() {
     } else {
         TraceLog(LOG_WARNING, "Player mesh unavailable; using the Raylib capsule.");
     }
+    avatarAssets_.LoadBaseCharacter(lightingShader_);
 
     skyboxShader_ = LoadShaderFromMemory(kSkyboxVertexShader, kSkyboxFragmentShader);
     if (skyboxShader_.id != 0) {

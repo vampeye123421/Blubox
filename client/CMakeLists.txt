@@ -132,6 +132,25 @@ add_custom_command(
 )
 target_sources(blubox_client PRIVATE "${BLUBOX_VERIFIED_BADGE_HEADER}")
 
+# The temporary Blubox R6 avatar ships inside the client executable, so avatar
+# rendering does not depend on a loose asset file or the launcher's working dir.
+set(BLUBOX_CHARACTER_MODEL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxR6Character.hpp")
+add_custom_command(
+    OUTPUT "${BLUBOX_CHARACTER_MODEL_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/avatars/BluboxR6_Studio.glb"
+            "-DOUTPUT_FILE=${BLUBOX_CHARACTER_MODEL_HEADER}"
+            "-DSYMBOL_NAME=kR6CharacterData"
+            "-DSIZE_SYMBOL_NAME=kR6CharacterDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/avatars/BluboxR6_Studio.glb"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+target_sources(blubox_client PRIVATE "${BLUBOX_CHARACTER_MODEL_HEADER}")
+
 target_include_directories(blubox_client PRIVATE
     src
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
