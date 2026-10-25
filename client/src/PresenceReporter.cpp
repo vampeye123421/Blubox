@@ -108,7 +108,7 @@ void PresenceReporter::Run(std::stop_token stopToken) {
         SecureErase(token);
 
         std::unique_lock lock(mutex_);
-        wake_.wait_for(lock, stopToken, std::chrono::seconds(30), [] { return false; });
+        wake_.wait_for(lock, stopToken, std::chrono::seconds(5), [] { return false; });
     }
 
     std::string token;

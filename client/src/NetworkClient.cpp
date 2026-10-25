@@ -90,15 +90,17 @@ bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
         if (!readAssetUrl("shirtAssetUrl", player.shirtAssetUrl) ||
             !readAssetUrl("pantsAssetUrl", player.pantsAssetUrl)) return false;
         const auto accessories = value.value("accessories", nlohmann::json::array());
-        if (!accessories.is_array() || accessories.size() > 3) return false;
+        if (!accessories.is_array() || accessories.size() > 32) return false;
         for (const auto& item : accessories) {
             if (!item.is_string()) return false;
             const std::string id = item.get<std::string>();
-            if (id != "cap-blue" && id != "backpack-cyan" && id != "halo-cyan") return false;
+            if (id.empty() || id.size() > 64 || !std::all_of(id.begin(), id.end(), [](unsigned char c) {
+                return std::isalnum(c) || c == '_' || c == '-';
+            })) return false;
             player.accessories.push_back(id);
         }
         const auto assets = value.value("accessoryAssets", nlohmann::json::array());
-        if (!assets.is_array() || assets.size() > 3) return false;
+        if (!assets.is_array() || assets.size() > 32) return false;
         for (const auto& item : assets) {
             if (!item.is_object() || !item.contains("assetUrl") || !item["assetUrl"].is_string() ||
                 !item.contains("attachmentName") || !item["attachmentName"].is_string()) return false;
@@ -130,6 +132,13 @@ void AppendU16(std::vector<enet_uint8> &buffer, std::size_t value) {
     buffer.push_back(static_cast<enet_uint8>((value16 >> 8) & 0xff));
     buffer.push_back(static_cast<enet_uint8>(value16 & 0xff));
 }
+
+void AppendLe16(std::vector<enet_uint8>& out, std::uint16_t value) { out.push_back(static_cast<enet_uint8>(value)); out.push_back(static_cast<enet_uint8>(value >> 8)); }
+void AppendLe32(std::vector<enet_uint8>& out, std::uint32_t value) { for (int i=0;i<4;++i) out.push_back(static_cast<enet_uint8>(value >> (i*8))); }
+void AppendLe64(std::vector<enet_uint8>& out, std::uint64_t value) { for (int i=0;i<8;++i) out.push_back(static_cast<enet_uint8>(value >> (i*8))); }
+std::uint16_t ReadLe16(const enet_uint8* p) { return static_cast<std::uint16_t>(p[0] | (std::uint16_t(p[1])<<8)); }
+std::uint32_t ReadLe32(const enet_uint8* p) { std::uint32_t v=0; for(int i=0;i<4;++i)v|=std::uint32_t(p[i])<<(i*8); return v; }
+std::uint64_t ReadLe64(const enet_uint8* p) { std::uint64_t v=0; for(int i=0;i<8;++i)v|=std::uint64_t(p[i])<<(i*8); return v; }
 
 std::uint16_t ReadU16(const enet_uint8 *data) {
     return static_cast<std::uint16_t>((static_cast<std::uint16_t>(data[0]) << 8) | data[1]);
@@ -166,6 +175,73 @@ void SecureErase(std::vector<enet_uint8> &buffer) noexcept {
 
 NetworkClient::~NetworkClient() {
     Shutdown();
+}
+
+bool NetworkClient::ConnectStudioLocal(std::string_view host, std::uint16_t port, std::string credential,
+                                       std::string displayName) {
+    Shutdown();
+    if (host != "127.0.0.1" || port == 0 || credential.size() != 64 ||
+        !std::all_of(credential.begin(), credential.end(), [](unsigned char c) { return std::isxdigit(c) != 0; })) return false;
+    if (enet_initialize() != 0) return false;
+    enetInitialized_ = true; studioLocal_ = true; studioCredential_ = std::move(credential);
+    studioDisplayName_ = displayName.empty() ? "Player" : std::move(displayName);
+    host_ = enet_host_create(nullptr, 1, 4, 0, 0);
+    if (!host_) { Shutdown(); return false; }
+    ENetAddress address{};
+    const std::string hostName(host);
+    if (enet_address_set_host(&address, hostName.c_str()) != 0) { Shutdown(); return false; }
+    address.port = port; peer_ = enet_host_connect(host_, &address, 4, 0);
+    if (!peer_) { Shutdown(); return false; }
+    TraceLog(LOG_INFO, "Started local Studio ENet connection to 127.0.0.1:%u.", static_cast<unsigned>(port));
+    return true;
+}
+
+bool NetworkClient::SendStudioPacket(std::uint8_t type, std::uint8_t channel,
+                                     std::span<const unsigned char> payload, bool reliable) {
+    if (!peer_ || !host_ || payload.size() > 16u * 1024u) return false;
+    std::vector<enet_uint8> wire; wire.reserve(16 + payload.size());
+    wire.push_back(type); wire.push_back(0); AppendLe16(wire, static_cast<std::uint16_t>(payload.size()));
+    AppendLe32(wire, studioSequence_++);
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    AppendLe64(wire, static_cast<std::uint64_t>(now)); wire.insert(wire.end(), payload.begin(), payload.end());
+    ENetPacket* packet = enet_packet_create(wire.data(), wire.size(), reliable ? ENET_PACKET_FLAG_RELIABLE : 0);
+    if (!packet || enet_peer_send(peer_, channel, packet) != 0) { if (packet) enet_packet_destroy(packet); return false; }
+    enet_host_flush(host_); return true;
+}
+
+bool NetworkClient::SendStudioHello() {
+    if (!studioLocal_ || studioCredential_.empty()) return false;
+    std::vector<enet_uint8> body; AppendLe16(body, 1); AppendLe16(body, static_cast<std::uint16_t>(studioCredential_.size()));
+    body.insert(body.end(), studioCredential_.begin(), studioCredential_.end());
+    const bool result = SendStudioPacket(0, 3, body, true);
+    SecureErase(body); return result;
+}
+
+void NetworkClient::HandleStudioPacket(const unsigned char* data, std::size_t size) {
+    if (!data || size < 16) return;
+    const auto* bytes = reinterpret_cast<const enet_uint8*>(data);
+    const auto payloadSize = ReadLe16(bytes + 2);
+    if (size != 16u + payloadSize) return;
+    if (bytes[0] == 1 && !authenticated_ && payloadSize == 12) {
+        const auto player = ReadLe32(bytes + 16); studioSessionToken_ = ReadLe64(bytes + 20);
+        if (!player || !studioSessionToken_) return;
+        sessionId_ = player; userId_ = studioDisplayName_; localAvatar_ = {};
+        localAvatar_.userId = userId_; localAvatar_.displayName = studioDisplayName_;
+        authenticated_ = true; disconnectKind_ = DisconnectKind::None;
+        TraceLog(LOG_INFO, "Authenticated with the local Studio playtest server."); return;
+    }
+    if (bytes[0] == 11 && authenticated_ && payloadSize >= 18 && ReadLe64(bytes + 16) == studioSessionToken_) {
+        if (studioPropertyDeltas_.size() >= 8) studioPropertyDeltas_.erase(studioPropertyDeltas_.begin());
+        studioPropertyDeltas_.emplace_back(bytes + 24, bytes + size);
+        return;
+    }
+    if (bytes[0] == 2) { authenticated_ = false; disconnectKind_ = DisconnectKind::ConnectionLost; }
+}
+
+std::vector<std::vector<unsigned char>> NetworkClient::TakeStudioPropertyDeltas() {
+    std::vector<std::vector<unsigned char>> deltas;
+    deltas.swap(studioPropertyDeltas_);
+    return deltas;
 }
 
 bool NetworkClient::Connect(const ClientSession &session) {
@@ -230,7 +306,7 @@ void NetworkClient::Poll() {
         switch (event.type) {
         case ENET_EVENT_TYPE_CONNECT:
             TraceLog(LOG_INFO, "ENet connection established; sending join handshake.");
-            if (!SendJoinHandshake()) {
+            if (studioLocal_ ? !SendStudioHello() : !SendJoinHandshake()) {
                 TraceLog(LOG_ERROR, "Could not send the ENet handshake.");
                 enet_peer_disconnect(event.peer, 0);
             }
@@ -275,6 +351,7 @@ void NetworkClient::Poll() {
 }
 
 void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
+    if (studioLocal_) { HandleStudioPacket(data, size); return; }
     if (data == nullptr || size < 2) return;
     const auto *bytes = reinterpret_cast<const enet_uint8 *>(data);
     if (bytes[1] != kProtocolVersion) {
@@ -352,6 +429,7 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
 }
 
 void NetworkClient::SendPlayerPosition(float x, float y, float z) {
+    if (studioLocal_) return;
     if (peer_ == nullptr || host_ == nullptr || !authenticated_ ||
         !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return;
     const double now = GetTime();
@@ -368,6 +446,21 @@ void NetworkClient::SendPlayerPosition(float x, float y, float z) {
         return;
     }
     enet_host_flush(host_);
+}
+
+void NetworkClient::SendStudioInput(float yaw, float pitch, float forward, float right, bool jump, bool sprint) {
+    if (!studioLocal_ || !authenticated_ || !peer_ || !std::isfinite(yaw) || !std::isfinite(pitch)) return;
+    const double now = GetTime(); if (now < nextPositionSendTime_) return; nextPositionSendTime_ = now + 1.0 / 60.0;
+    std::vector<enet_uint8> body; AppendLe64(body, studioSessionToken_);
+    constexpr std::string_view name = "__BluboxInput";
+    std::uint32_t hash = 2166136261u; for (unsigned char c : name) { hash ^= c; hash *= 16777619u; }
+    const auto id = static_cast<std::uint16_t>((hash ^ (hash >> 16)) & 0xffffu);
+    AppendLe16(body, id ? id : 1); AppendLe16(body, static_cast<std::uint16_t>(name.size())); body.insert(body.end(), name.begin(), name.end());
+    AppendLe32(body, studioInputTick_++); body.push_back(static_cast<enet_uint8>((jump ? 1 : 0) | (sprint ? 2 : 0)));
+    auto appendFloat = [&](float value) { AppendLe32(body, std::bit_cast<std::uint32_t>(value)); };
+    appendFloat(yaw); appendFloat(pitch); appendFloat(forward); appendFloat(right);
+    appendFloat(0); appendFloat(0); appendFloat(0);
+    (void)SendStudioPacket(3, 2, body, false);
 }
 
 bool NetworkClient::SendJoinHandshake() {
@@ -426,6 +519,9 @@ void NetworkClient::Shutdown() noexcept {
         peer_ = nullptr;
     }
     session_ = nullptr;
+    std::fill(studioCredential_.begin(), studioCredential_.end(), '\0');
+    studioCredential_.clear(); studioDisplayName_.clear(); studioPropertyDeltas_.clear();
+    studioLocal_ = false; studioSessionToken_ = 0; studioSequence_ = 1; studioInputTick_ = 1;
     userId_.clear();
     sessionId_ = 0;
     userVerified_ = false;

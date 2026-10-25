@@ -25,6 +25,8 @@
 #endif
 
 #include <algorithm>
+#include <fstream>
+#include <iterator>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -53,6 +55,21 @@ bool Boolean(const Json &object, const char *key, bool fallback) {
 std::string String(const Json &object, const char *key, std::string fallback = {}) {
     return object.is_object() && object.contains(key) && object[key].is_string()
         ? object[key].get<std::string>() : std::move(fallback);
+}
+
+std::uint32_t NetworkIdForEntityId(std::string_view id) {
+    std::uint32_t hash = 2166136261u;
+    for (const unsigned char byte : id) { hash ^= byte; hash *= 16777619u; }
+    return hash ? hash : 1u;
+}
+
+std::uint16_t ReadLe16(const unsigned char* p) {
+    return static_cast<std::uint16_t>(p[0] | (std::uint16_t(p[1]) << 8));
+}
+std::uint32_t ReadLe32(const unsigned char* p) {
+    std::uint32_t value = 0;
+    for (int i = 0; i < 4; ++i) value |= std::uint32_t(p[i]) << (i * 8);
+    return value;
 }
 
 Vector2 Vector2Value(const Json &value, Vector2 fallback) {
@@ -290,6 +307,7 @@ bool PublishedWorld::Load(std::string_view worldId, std::string &error) {
                 const float transparency = std::clamp(Number(properties, "transparency", 0.0f), 0.0f, 1.0f);
                 parts_.push_back(StaticPart{kind, position, size, WithTransparency(color, transparency),
                                              Boolean(entity, "visible", true), Boolean(properties, "Anchored", true)});
+                parts_.back().networkId = NetworkIdForEntityId(id);
                 if (kind == "spawnlocation" && Boolean(properties, "Enabled", true)) {
                     spawnPosition_ = Vector3{position.x, position.y + std::max(0.6f, size.y * 0.5f + 1.1f), position.z};
                 }
@@ -349,6 +367,123 @@ bool PublishedWorld::Load(std::string_view worldId, std::string &error) {
         screenGuis_.clear();
         error = std::string("Could not read the published world: ") + exception.what();
         return false;
+    }
+    return true;
+}
+
+bool PublishedWorld::LoadLocalMapFile(std::string_view path, std::string &error) {
+    parts_.clear(); gui_.clear(); guiIndex_.clear(); localScripts_.clear(); screenGuis_.clear();
+    capturedButton_.reset(); spawnPosition_ = Vector3{0.0f, 3.0f, 0.0f};
+    if (path.empty() || path.size() > 32760) { error = "Invalid Studio playtest map path."; return false; }
+    std::ifstream file(std::string(path), std::ios::binary);
+    if (!file) { error = "Studio playtest map could not be opened."; return false; }
+    std::string payload((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (payload.empty() || payload.size() > 64u * 1024u * 1024u) { error = "Studio playtest map has an invalid size."; return false; }
+    try {
+        const Json map = Json::parse(payload);
+        if (!map.is_object() || map.value("format", std::string{}) != "blubox-map" ||
+            map.value("formatVersion", 0) != 1 || !map.contains("entities") ||
+            !map["entities"].is_array() || map["entities"].size() > kMaxWorldEntities) {
+            error = "Studio supplied an unsupported Blubox map."; return false;
+        }
+        const Json& entities = map["entities"];
+        std::unordered_map<std::string, std::string> parents;
+        for (const Json& entity : entities) {
+            if (!entity.is_object()) continue;
+            const std::string kind = String(entity, "kind");
+            const std::string id = String(entity, "id");
+            parents[id] = String(entity, "parent", "Workspace");
+            const Json properties = entity.value("properties", Json::object());
+            if (Boolean(properties, "RuntimeVisualOnly", false)) continue;
+            if (kind == "screengui" || kind == "frame" || kind == "textlabel" || kind == "textbutton") {
+                GuiElement element;
+                element.id = id;
+                element.name = String(entity, "name", kind == "screengui" ? "ScreenGui" : kind == "textbutton" ? "TextButton" : kind == "textlabel" ? "TextLabel" : "Frame");
+                element.parent = String(entity, "parent"); element.kind = kind;
+                element.enabled = Boolean(properties, "enabled", true);
+                element.visible = Boolean(properties, "visible", true) && Boolean(entity, "visible", true);
+                element.text = String(properties, "text");
+                element.horizontalAlignment = String(properties, "horizontalAlignment", "Left");
+                element.verticalAlignment = String(properties, "verticalAlignment", "Top");
+                element.textXAlignment = String(properties, "textXAlignment", "Left");
+                element.textYAlignment = String(properties, "textYAlignment", "Center");
+                element.position = Vector2Value(properties.value("position", Json::array()), Vector2{40, 40});
+                element.positionScale = Vector2Value(properties.value("positionScale", Json::array()), Vector2{});
+                element.size = Vector2Value(properties.value("size", Json::array()), Vector2{220, 64});
+                element.sizeScale = Vector2Value(properties.value("sizeScale", Json::array()), Vector2{});
+                element.background = ColorValue(properties.value("backgroundColor", Json::array()), element.background);
+                element.textColor = ColorValue(properties.value("textColor", Json::array()), element.textColor);
+                element.backgroundTransparency = std::clamp(Number(properties, "backgroundTransparency", 0), 0.0f, 1.0f);
+                element.textTransparency = std::clamp(Number(properties, "textTransparency", 0), 0.0f, 1.0f);
+                element.fontSize = std::clamp(Number(properties, "fontSize", 20), 6.0f, 144.0f);
+                element.cornerRadius = std::clamp(Number(properties, "cornerRadius", 0), 0.0f, 256.0f);
+                element.scaleWithViewport = Boolean(properties, "scaleWithViewport", true);
+                element.textScaled = Boolean(properties, "textScaled", false);
+                element.textWrapped = Boolean(properties, "textWrapped", false);
+                element.textTruncate = Boolean(properties, "textTruncate", false);
+                element.zIndex = std::clamp(static_cast<int>(Number(properties, "zIndex", 1)), 0, 100000);
+                guiIndex_[element.id] = gui_.size(); gui_.push_back(std::move(element));
+            } else if (kind == "block" || kind == "spawnlocation" || kind == "sphere" || kind == "wedgepart" || kind == "cornerwedgepart") {
+                const Json transform = entity.value("transform", Json::object());
+                const Vector3 pos = Vector3Value(transform.value("position", Json::array()), Vector3{});
+                const Vector3 size = Vector3Value(transform.value("scale", Json::array()), Vector3{1,1,1});
+                const Color color = ColorValue(entity.value("color", Json::array()), Color{75,163,226,255});
+                parts_.push_back({kind, pos, size, WithTransparency(color, std::clamp(Number(properties,"transparency",0),0.0f,1.0f)), Boolean(entity,"visible",true), Boolean(properties,"Anchored",true)});
+                parts_.back().networkId = NetworkIdForEntityId(id);
+                if (kind == "spawnlocation" && Boolean(properties,"Enabled",true)) spawnPosition_ = {pos.x,pos.y+std::max(0.6f,size.y*0.5f+1.1f),pos.z};
+            }
+        }
+        if (map.contains("scriptObjects") && map["scriptObjects"].is_array()) for (const Json& script : map["scriptObjects"]) {
+            if (!script.is_object() || String(script,"className") != "LocalScript") continue;
+            LocalScript item{String(script,"id"), String(script,"name","LocalScript"), String(script,"parent"), String(script,"source")};
+            std::string parent = item.parent; bool clientContext = false;
+            for (std::size_t depth=0; depth<=entities.size(); ++depth) {
+                if (parent == "StarterGui" || parent == "StarterPlayer") { clientContext=true; break; }
+                const auto found=parents.find(parent); if(found==parents.end() || found->second==parent) break; parent=found->second;
+            }
+            if(clientContext && !item.source.empty() && item.source.size()<=256u*1024u) localScripts_.push_back(std::move(item));
+        }
+        for (std::size_t i=0;i<gui_.size();++i) {
+            const auto parent=guiIndex_.find(gui_[i].parent);
+            if(parent!=guiIndex_.end() && parent->second!=i) { gui_[i].parentIndex=parent->second; gui_[parent->second].children.push_back(i); }
+            else if(gui_[i].kind=="screengui" && gui_[i].parent=="StarterGui" && gui_[i].enabled) screenGuis_.push_back(i);
+        }
+        for(auto& element:gui_) std::stable_sort(element.children.begin(),element.children.end(),[this](std::size_t a,std::size_t b){return gui_[a].zIndex<gui_[b].zIndex;});
+    } catch (const std::exception& exception) {
+        parts_.clear(); gui_.clear(); guiIndex_.clear(); localScripts_.clear(); screenGuis_.clear();
+        error = std::string("Could not read Studio's local map: ") + exception.what(); return false;
+    }
+    error.clear(); return true;
+}
+
+bool PublishedWorld::ApplyStudioPropertyDelta(std::span<const unsigned char> payload) {
+    // Payload starts after the RemoteManager session token: timestamp:u64,
+    // count:u16, then fixed-size property records.
+    if (payload.size() < 10) return false;
+    const std::uint16_t count = ReadLe16(payload.data() + 8);
+    constexpr std::size_t kRecordSize = 32;
+    if (count > 300 || payload.size() != 10u + std::size_t(count) * kRecordSize) return false;
+    const unsigned char* record = payload.data() + 10;
+    for (std::uint16_t i = 0; i < count; ++i, record += kRecordSize) {
+        const std::uint32_t networkId = ReadLe32(record);
+        const std::uint16_t mask = ReadLe16(record + 8);
+        const auto found = std::find_if(parts_.begin(), parts_.end(), [networkId](const StaticPart& part) {
+            return part.networkId == networkId;
+        });
+        if (found == parts_.end()) continue;
+        const unsigned char* transform = record + 10;
+        const auto decode = [](std::uint16_t value, float low, float high) {
+            return low + (static_cast<float>(value) / 65535.0f) * (high - low);
+        };
+        if (mask & 1u) {
+            found->position = {decode(ReadLe16(transform), -4096.0f, 4096.0f),
+                               decode(ReadLe16(transform + 2), -4096.0f, 4096.0f),
+                               decode(ReadLe16(transform + 4), -4096.0f, 4096.0f)};
+            found->size = {decode(ReadLe16(transform + 6), 0.0f, 64.0f),
+                           decode(ReadLe16(transform + 8), 0.0f, 64.0f),
+                           decode(ReadLe16(transform + 10), 0.0f, 64.0f)};
+        }
+        if (mask & 2u) found->color = {record[22], record[23], record[24], 255};
     }
     return true;
 }

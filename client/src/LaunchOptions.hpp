@@ -3,6 +3,7 @@
 #include "ProtocolLaunchData.hpp"
 
 #include <optional>
+#include <cstdint>
 #include <string>
 
 struct LaunchOptions {
@@ -15,6 +16,12 @@ struct LaunchOptions {
     bool unregisterProtocol = false;
     bool uninstallClient = false;
     bool uninstallStudio = false;
+    bool studioPlaytest = false;
+    std::string studioHost;
+    std::string studioCredential;
+    std::string studioMapFile;
+    std::string studioDisplayName = "Player";
+    std::uint16_t studioPort = 0;
 };
 
 LaunchOptions ParseLaunchOptions(int argc, char *argv[]);

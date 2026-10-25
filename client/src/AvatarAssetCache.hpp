@@ -15,7 +15,7 @@ public:
 
 private:
     struct TextureEntry { Texture2D texture{}; bool attempted = false; };
-    struct ModelEntry { Model model{}; bool attempted = false; };
+    struct ModelEntry { Model model{}; BoundingBox bounds{}; bool attempted = false; };
     TextureEntry& texture(const std::string& url);
     ModelEntry& model(const std::string& url);
     std::unordered_map<std::string, TextureEntry> textures_;

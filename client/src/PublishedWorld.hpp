@@ -5,6 +5,7 @@
 #include <limits>
 #include <optional>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -20,6 +21,7 @@ public:
         Color color{75, 163, 226, 255};
         bool visible = true;
         bool collidable = true;
+        std::uint32_t networkId = 0;
     };
 
     struct LocalScript {
@@ -30,6 +32,8 @@ public:
     };
 
     bool Load(std::string_view worldId, std::string &error);
+    bool LoadLocalMapFile(std::string_view path, std::string &error);
+    bool ApplyStudioPropertyDelta(std::span<const unsigned char> payload);
     const std::vector<StaticPart> &Parts() const noexcept { return parts_; }
     Vector3 SpawnPosition() const noexcept { return spawnPosition_; }
     bool HasParts() const noexcept { return !parts_.empty(); }

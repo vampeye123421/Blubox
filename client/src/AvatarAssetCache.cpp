@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -161,6 +163,7 @@ AvatarAssetCache::ModelEntry& AvatarAssetCache::model(const std::string& url) {
         if (!file || !file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) return entry;
     }
     entry.model = LoadModel(path.string().c_str());
+    if (entry.model.meshCount > 0) entry.bounds = GetModelBoundingBox(entry.model);
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 #endif
@@ -178,14 +181,38 @@ void AvatarAssetCache::Draw(const NetworkPlayerSnapshot& avatar) {
         DrawOverlay(pantsTexture, Rectangle{347, 256, 58, 128}, 0.20f, -0.39f, 0.31f, 0.72f, 0.164f, ParseColor(avatar.pantsColor));
     }
     for (const auto& accessory : avatar.accessoryAssets) {
-        Model& asset = model(accessory.assetUrl).model;
+        ModelEntry& entry = model(accessory.assetUrl);
+        Model& asset = entry.model;
         if (!asset.meshCount) continue;
-        Vector3 socket{0.0f, 1.30f, 0.0f};
-        const auto& name = accessory.attachmentName;
-        if (name.find("Back") != std::string::npos) socket = Vector3{0.0f, 0.34f, -0.30f};
-        else if (name.find("Shoulder") != std::string::npos) socket = Vector3{name.find("Left") != std::string::npos ? -0.50f : 0.50f, 0.70f, 0.0f};
-        else if (name.find("Waist") != std::string::npos) socket = Vector3{0.0f, -0.05f, 0.0f};
-        DrawModel(asset, socket, 1.0f, ParseColor(accessory.color));
+
+        const Vector3 size{entry.bounds.max.x - entry.bounds.min.x,
+                           entry.bounds.max.y - entry.bounds.min.y,
+                           entry.bounds.max.z - entry.bounds.min.z};
+        const float largest = std::max({size.x, size.y, size.z});
+        if (!(largest > 0.00001f) || !std::isfinite(largest)) continue;
+        const Vector3 center{(entry.bounds.min.x + entry.bounds.max.x) * 0.5f,
+                             (entry.bounds.min.y + entry.bounds.max.y) * 0.5f,
+                             (entry.bounds.min.z + entry.bounds.max.z) * 0.5f};
+
+        std::string name = accessory.attachmentName;
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        const bool hat = name.ends_with("hatattachment") || name.ends_with("hairattachment");
+        const bool back = name.find("back") != std::string::npos;
+        const bool shoulder = name.find("shoulder") != std::string::npos;
+        const bool waist = name.find("waist") != std::string::npos;
+        const float desiredSize = hat ? 0.68f : shoulder ? 0.52f : back ? 0.72f : waist ? 0.62f : 0.58f;
+        const float scale = std::min(desiredSize / largest, 1000.0f);
+        Vector3 anchor{0.0f, 1.02f, 0.31f};
+        if (back) anchor = Vector3{0.0f, 0.58f, -0.27f};
+        else if (shoulder) anchor = Vector3{name.find("left") != std::string::npos ? -0.50f : 0.50f, 0.68f, 0.0f};
+        else if (waist) anchor = Vector3{0.0f, -0.05f, 0.0f};
+        Vector3 position{anchor.x - center.x * scale,
+                         hat ? 1.29f - entry.bounds.min.y * scale : anchor.y - center.y * scale,
+                         anchor.z - center.z * scale};
+        DrawModelEx(asset, position, Vector3{0.0f, 1.0f, 0.0f}, 0.0f,
+                    Vector3{scale, scale, scale}, WHITE);
     }
 }
 
