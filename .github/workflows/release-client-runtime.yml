@@ -89,10 +89,10 @@ jobs:
             manifest.downloadUrl = `https://github.com/${owner}/${repo}/releases/download/runtime-v${version}/BluboxClient.exe`;
             manifest.sha256 = process.env.CLIENT_SHA256;
             manifest.launcherVersion = version;
-            manifest.launcherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/runtime-v${version}/blubox_launcher.exe`;
+            manifest.launcherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/runtime-v${version}/BluboxLauncher.exe`;
             manifest.launcherSha256 = process.env.CLIENT_LAUNCHER_SHA256;
             manifest.studioLauncherVersion = version;
-            manifest.studioLauncherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/runtime-v${version}/blubox_studio_launcher.exe`;
+            manifest.studioLauncherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/runtime-v${version}/BluboxStudioLauncher.exe`;
             manifest.studioLauncherSha256 = process.env.STUDIO_LAUNCHER_SHA256;
             await github.rest.repos.createOrUpdateFileContents({
               owner, repo, path, branch: 'main',

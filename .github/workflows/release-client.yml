@@ -123,10 +123,10 @@ jobs:
             manifest.downloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxClient.exe`;
             manifest.sha256 = process.env.CLIENT_SHA256;
             manifest.launcherVersion = version;
-            manifest.launcherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_launcher.exe`;
+            manifest.launcherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxLauncher.exe`;
             manifest.launcherSha256 = process.env.CLIENT_LAUNCHER_SHA256;
             manifest.studioLauncherVersion = version;
-            manifest.studioLauncherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/blubox_studio_launcher.exe`;
+            manifest.studioLauncherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxStudioLauncher.exe`;
             manifest.studioLauncherSha256 = process.env.STUDIO_LAUNCHER_SHA256;
             manifest.studioVersion = process.env.STUDIO_VERSION;
             manifest.studioDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxStudio.exe`;
