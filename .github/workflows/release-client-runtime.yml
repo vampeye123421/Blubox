@@ -11,9 +11,6 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    env:
-      CCACHE_DIR: ${{ runner.temp }}/blubox-ccache
-      CCACHE_MAXSIZE: 3G
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -28,6 +25,12 @@ jobs:
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-ccache
+
+      - name: Set compiler cache location
+        shell: pwsh
+        run: |
+          "CCACHE_DIR=$env:RUNNER_TEMP\blubox-ccache" >> $env:GITHUB_ENV
+          "CCACHE_MAXSIZE=3G" >> $env:GITHUB_ENV
 
       - name: Restore compiler cache
         uses: actions/cache@v5
