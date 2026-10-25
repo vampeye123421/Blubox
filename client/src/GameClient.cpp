@@ -813,7 +813,23 @@ void GameClient::DrawFrame() {
                              Vector2{labelWidth, labelHeight},
                              Vector2{labelWidth * 0.5f, labelHeight * 0.5f}, 0.0f, WHITE);
     };
-    drawNameplate(localDisplayName, localVerified, localNamePosition);
+
+    struct Nameplate {
+        std::string name;
+        bool verified;
+        Vector3 position;
+        float cameraDistanceSquared;
+    };
+    std::vector<Nameplate> nameplates;
+    nameplates.reserve(networkClient_.Players().size() + 1);
+    const auto distanceSquaredFromCamera = [this](Vector3 position) {
+        const float x = position.x - camera_.position.x;
+        const float y = position.y - camera_.position.y;
+        const float z = position.z - camera_.position.z;
+        return x * x + y * y + z * z;
+    };
+    nameplates.push_back(Nameplate{localDisplayName, localVerified, localNamePosition,
+                                   distanceSquaredFromCamera(localNamePosition)});
 
     for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
         if (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId()) {
@@ -826,8 +842,23 @@ void GameClient::DrawFrame() {
                    characterModelsReady_ ? &characterSphereModel_ : nullptr);
 
         const Vector3 labelPosition{remote.x, remote.y + 1.62f, remote.z};
-        drawNameplate(remote.displayName, remote.isVerified, labelPosition);
+        nameplates.push_back(Nameplate{remote.displayName, remote.isVerified, labelPosition,
+                                       distanceSquaredFromCamera(labelPosition)});
     }
+
+    // Billboard textures include transparent pixels around the glyphs. Keep
+    // depth testing against the scene, but don't let those transparent pixels
+    // write depth and punch rectangular holes through characters or other
+    // nameplates. Draw far labels first so nearby names remain visually on top.
+    std::stable_sort(nameplates.begin(), nameplates.end(),
+                     [](const Nameplate &a, const Nameplate &b) {
+                         return a.cameraDistanceSquared > b.cameraDistanceSquared;
+                     });
+    rlDisableDepthMask();
+    for (const Nameplate &nameplate : nameplates) {
+        drawNameplate(nameplate.name, nameplate.verified, nameplate.position);
+    }
+    rlEnableDepthMask();
 
     EndMode3D();
 
