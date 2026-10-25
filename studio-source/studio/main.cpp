@@ -405,6 +405,35 @@ void AppendOutput(StudioState& state, std::string level, std::string message) {
     state.output.push_back({std::move(level), std::move(message)});
 }
 
+bool DeleteSelectedEntity(StudioState& state) {
+    if (state.selectedEntity < 0 || state.selectedEntity >= static_cast<int>(state.map.entities.size())) return false;
+    const Entity& selected = state.map.entities[static_cast<std::size_t>(state.selectedEntity)];
+    const std::string deletedId = selected.id;
+    const std::string deletedName = selected.name;
+    std::unordered_set<std::string> deletedIds{deletedId};
+    bool added = true;
+    while (added) {
+        added = false;
+        for (const Entity& candidate : state.map.entities) {
+            if (!candidate.parent.empty() && deletedIds.contains(candidate.parent) && deletedIds.insert(candidate.id).second)
+                added = true;
+        }
+    }
+    if (state.scripts) {
+        for (const Entity& candidate : state.map.entities)
+            if (deletedIds.contains(candidate.id) && IsScriptObject(candidate)) state.scripts->StopEntity(candidate.id);
+    }
+    std::erase_if(state.map.entities, [&](const Entity& candidate) { return deletedIds.contains(candidate.id); });
+    std::erase_if(state.openScriptIds, [&](const std::string& id) { return deletedIds.contains(id); });
+    for (const auto& id : deletedIds) state.scriptEditors.erase(id);
+    if (deletedIds.contains(state.focusScriptId)) state.focusScriptId.clear();
+    state.selectedEntity = -1;
+    state.selectedService.clear();
+    state.dirty = true;
+    AppendOutput(state, "INFO", "Deleted " + deletedName + ".");
+    return true;
+}
+
 ImVec4 StatusColor(bool error) {
     return error ? ImVec4(0.95f, 0.37f, 0.32f, 1.0f) : ImVec4(0.46f, 0.83f, 0.67f, 1.0f);
 }
@@ -2350,17 +2379,7 @@ void DrawInspector(StudioState& state) {
     }
     ImGui::Spacing();
     if (ImGui::Button(IsScriptObject(entity) ? "Delete script" : "Delete object", ImVec2(-1, 0))) {
-        const std::string deletedId = entity.id;
-        const std::string deletedName = entity.name;
-        std::erase_if(state.map.entities, [&](const Entity& candidate) {
-            return candidate.id == deletedId || candidate.parent == deletedId;
-        });
-        std::erase(state.openScriptIds, deletedId);
-        state.scriptEditors.erase(deletedId);
-        state.selectedEntity = -1;
-        state.selectedService.clear();
-        state.dirty = true;
-        AppendOutput(state, "INFO", "Deleted " + deletedName + ".");
+        DeleteSelectedEntity(state);
     }
     ImGui::PopItemWidth();
     ImGui::End();
@@ -3212,18 +3231,40 @@ void DrawOutput(StudioState& state) {
     if (!ImGui::Begin("Output", &state.showOutput)) { ImGui::End(); return; }
     if (ImGui::SmallButton("Clear")) state.output.clear();
     ImGui::SameLine();
+    ImGui::BeginDisabled(state.output.empty());
+    if (ImGui::SmallButton("Copy all")) {
+        std::string log;
+        for (const OutputEntry& entry : state.output) {
+            log += '[';
+            log += entry.level;
+            log += "] ";
+            log += entry.message;
+            log += '\n';
+        }
+        ImGui::SetClipboardText(log.c_str());
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
     ImGui::TextDisabled("Script errors and Studio messages");
     ImGui::Separator();
     ImGui::BeginChild("OutputLog", ImVec2(0.0f, 0.0f), true);
     const bool followTail = ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f;
+    int outputLineId = 0;
     for (const OutputEntry& entry : state.output) {
+        ImGui::PushID(outputLineId++);
         const ImVec4 color = entry.level == "ERROR" ? ImVec4(0.96f, 0.38f, 0.35f, 1.0f)
             : entry.level == "WARNING" ? ImVec4(0.96f, 0.74f, 0.30f, 1.0f)
             : entry.level == "INFO" ? ImVec4(0.64f, 0.78f, 0.92f, 1.0f)
             : ImVec4(0.82f, 0.84f, 0.88f, 1.0f);
         ImGui::PushStyleColor(ImGuiCol_Text, color);
-        ImGui::TextUnformatted(("[" + entry.level + "] " + entry.message).c_str());
+        const std::string line = "[" + entry.level + "] " + entry.message;
+        ImGui::TextUnformatted(line.c_str());
+        if (ImGui::BeginPopupContextItem("OutputLineContext")) {
+            if (ImGui::MenuItem("Copy line")) ImGui::SetClipboardText(line.c_str());
+            ImGui::EndPopup();
+        }
         ImGui::PopStyleColor();
+        ImGui::PopID();
     }
     if (followTail) ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
@@ -3420,6 +3461,13 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
         // Required once per ImGui frame: refresh ImGuizmo's hover/drag state before
         // any viewport calls to Manipulate().
         ImGuizmo::BeginFrame();
+        if (state.authenticated && state.projectOpen && state.inputRouter.routeEditorInput() &&
+            (!state.playMode || (state.playMode->state() != blubox::engine::play::PlayModeState::Running &&
+                                 state.playMode->state() != blubox::engine::play::PlayModeState::Paused)) &&
+            !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
+            (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))) {
+            DeleteSelectedEntity(state);
+        }
         if (!state.authenticated) {
             DrawLoginModal(state);
         } else if (state.projectOpen) {

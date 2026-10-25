@@ -288,6 +288,8 @@ void PhysicsWorld::removeBody(InstanceHandle h) {
   bodies_.erase(h.id);
   humanoids_.erase(h.id);
   inputs_.erase(h.id);
+  previousJumpInputs_.erase(h.id);
+  jumpBufferRemaining_.erase(h.id);
 }
 bool PhysicsWorld::applyForce(InstanceHandle h, Vec3 f) {
   auto i = impl_->bodyIds.find(h.id);
@@ -321,6 +323,9 @@ bool PhysicsWorld::addHumanoid(InstanceHandle h, float speed, float jump, float 
 }
 void PhysicsWorld::setInput(InstanceHandle h, MoveInput v) {
   if (humanoids_.contains(h.id)) {
+    const bool wasJumping = previousJumpInputs_[h.id];
+    if (v.jump && !wasJumping) jumpBufferRemaining_[h.id] = 0.18f;
+    previousJumpInputs_[h.id] = v.jump;
     const float n = std::sqrt(v.x * v.x + v.z * v.z);
     if (n > 1) {
       v.x /= n;
@@ -364,8 +369,11 @@ void PhysicsWorld::step(double dt) {
       const float blend = std::clamp((ch.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround ? 60.0f : 20.0f) * step, 0.0f, 1.0f);
       velocity.SetX(velocity.GetX() + (targetX - velocity.GetX()) * blend);
       velocity.SetZ(velocity.GetZ() + (targetZ - velocity.GetZ()) * blend);
-      if (in.jump && ch.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround) {
+      float& jumpBuffer = jumpBufferRemaining_[id];
+      jumpBuffer = std::max(0.0f, jumpBuffer - step);
+      if (jumpBuffer > 0.0f && ch.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround) {
         velocity.SetY(hs.jumpSpeed);
+        jumpBuffer = 0.0f;
         hs.grounded = false;
         hs.state = HumanoidState::State::Jumping;
       }
@@ -447,6 +455,8 @@ void PhysicsWorld::step(double dt) {
         impl_->touchEvents.forget(i->second.owner);
         humanoids_.erase(i->first);
         inputs_.erase(i->first);
+        previousJumpInputs_.erase(i->first);
+        jumpBufferRemaining_.erase(i->first);
         i = impl_->characters.erase(i);
       } else {
         ++i;

@@ -59,6 +59,8 @@ class PhysicsWorld {
   std::unordered_map<InstanceId, Vec3> lastPhysicsPositions_;
   std::unordered_map<InstanceId, HumanoidState> humanoids_;
   std::unordered_map<InstanceId, MoveInput> inputs_;
+  std::unordered_map<InstanceId, bool> previousJumpInputs_;
+  std::unordered_map<InstanceId, float> jumpBufferRemaining_;
   Vec3 gravity_{0, -19.62f, 0};
   double accumulator_ = 0;
   static constexpr double kFixedStep = 1.0 / 60.0;
