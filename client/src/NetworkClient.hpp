@@ -14,6 +14,13 @@ struct _ENetHost;
 struct _ENetPeer;
 
 struct NetworkPlayerSnapshot {
+    struct AccessoryAsset {
+        std::string id;
+        std::string assetUrl;
+        std::string attachmentName;
+        std::string clientStyle;
+        std::string color;
+    };
     std::uint64_t sessionId = 0;
     std::string userId;
     std::string displayName;
@@ -23,7 +30,10 @@ struct NetworkPlayerSnapshot {
     std::string shirtColor = "#22b8cf";
     std::string pantsId = "pants-dark-denim";
     std::string pantsColor = "#334b78";
+    std::string shirtAssetUrl;
+    std::string pantsAssetUrl;
     std::vector<std::string> accessories;
+    std::vector<AccessoryAsset> accessoryAssets;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;

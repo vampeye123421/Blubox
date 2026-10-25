@@ -26,6 +26,7 @@
 #endif
 
 #include <cstdint>
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <chrono>
@@ -51,7 +52,7 @@ constexpr enet_uint8 kProtocolVersion = 5;
 constexpr std::size_t kMaxUserIdBytes = 256;
 constexpr std::size_t kMaxDisplayNameBytes = 64;
 constexpr std::size_t kMaxSnapshotPlayers = 128;
-constexpr std::size_t kMaxAvatarDescriptionBytes = 1024;
+constexpr std::size_t kMaxAvatarDescriptionBytes = 8192;
 
 bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
     if (payload.empty() || payload.size() > kMaxAvatarDescriptionBytes) return false;
@@ -74,6 +75,20 @@ bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
         };
         if (!readColor("bodyColor", player.bodyColor) || !readColor("shirtColor", player.shirtColor) ||
             !readColor("pantsColor", player.pantsColor)) return false;
+        const auto readAssetUrl = [&](const char* key, std::string& output) {
+            if (!value.contains(key) || value[key].is_null()) { output.clear(); return true; }
+            if (!value[key].is_string()) return false;
+            const std::string candidate = value[key].get<std::string>();
+            constexpr std::string_view prefix = "https://";
+            constexpr std::string_view path = "/storage/v1/object/public/marketplace-assets/";
+            if (candidate.size() > 2048 || !candidate.starts_with(prefix) ||
+                candidate.find(path) == std::string::npos || candidate.find_first_of("\\\\\r\n") != std::string::npos ||
+                candidate.find('@') != std::string::npos) return false;
+            output = candidate;
+            return true;
+        };
+        if (!readAssetUrl("shirtAssetUrl", player.shirtAssetUrl) ||
+            !readAssetUrl("pantsAssetUrl", player.pantsAssetUrl)) return false;
         const auto accessories = value.value("accessories", nlohmann::json::array());
         if (!accessories.is_array() || accessories.size() > 3) return false;
         for (const auto& item : accessories) {
@@ -81,6 +96,30 @@ bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
             const std::string id = item.get<std::string>();
             if (id != "cap-blue" && id != "backpack-cyan" && id != "halo-cyan") return false;
             player.accessories.push_back(id);
+        }
+        const auto assets = value.value("accessoryAssets", nlohmann::json::array());
+        if (!assets.is_array() || assets.size() > 3) return false;
+        for (const auto& item : assets) {
+            if (!item.is_object() || !item.contains("assetUrl") || !item["assetUrl"].is_string() ||
+                !item.contains("attachmentName") || !item["attachmentName"].is_string()) return false;
+            NetworkPlayerSnapshot::AccessoryAsset asset;
+            asset.id = item.value("id", std::string{});
+            asset.assetUrl = item["assetUrl"].get<std::string>();
+            asset.attachmentName = item["attachmentName"].get<std::string>();
+            asset.clientStyle = item.value("clientStyle", std::string{});
+            asset.color = item.value("color", std::string{"#4c8dff"});
+            constexpr std::string_view path = "/storage/v1/object/public/marketplace-assets/";
+            if (asset.id.size() > 64 || asset.assetUrl.size() > 2048 ||
+                !asset.assetUrl.starts_with("https://") || asset.assetUrl.find(path) == std::string::npos ||
+                asset.assetUrl.find_first_of("\\\\\r\n") != std::string::npos ||
+                asset.attachmentName.empty() || asset.attachmentName.size() > 80 ||
+                !std::all_of(asset.attachmentName.begin(), asset.attachmentName.end(), [](unsigned char c) {
+                    return std::isalnum(c) || c == '_' || c == '.';
+                }) || asset.color.size() != 7 || asset.color.front() != '#' ||
+                !std::all_of(asset.color.begin() + 1, asset.color.end(), [](unsigned char c) {
+                    return std::isxdigit(c) != 0;
+                })) return false;
+            player.accessoryAssets.push_back(std::move(asset));
         }
         return true;
     } catch (...) { return false; }

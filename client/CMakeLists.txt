@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.2.17 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.2.18 LANGUAGES C CXX)
 if(WIN32)
     enable_language(RC)
 endif()
@@ -75,6 +75,7 @@ add_executable(blubox_client WIN32
     src/PhysicsWorld.cpp
     src/Player.cpp
     src/PublishedWorld.cpp
+    src/AvatarAssetCache.cpp
     src/LocalScriptRuntime.cpp
     src/RaylibCompat.cpp
     src/GameClient.cpp

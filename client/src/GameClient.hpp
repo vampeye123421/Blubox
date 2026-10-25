@@ -7,6 +7,7 @@
 #include "Player.hpp"
 #include "PublishedWorld.hpp"
 #include "LocalScriptRuntime.hpp"
+#include "AvatarAssetCache.hpp"
 
 #include <raylib.h>
 
@@ -30,6 +31,7 @@ private:
     PhysicsWorld physicsWorld_;
     PublishedWorld publishedWorld_;
     LocalScriptRuntime localScriptRuntime_;
+    AvatarAssetCache avatarAssets_;
     std::unique_ptr<Player> player_;
     Camera3D camera_{};
     Shader lightingShader_{};

@@ -127,6 +127,8 @@ Color AvatarColor(std::string_view value, Color fallback) {
 }
 
 void DrawAvatar(Vector3 center, const NetworkPlayerSnapshot& appearance, Color identityTint,
+                AvatarAssetCache& avatarAssets,
+                const Model* headSphereModel,
                 float facingYaw = 0.0f) {
     const Color skin = AvatarColor(appearance.bodyColor, identityTint);
     const Color shirt = AvatarColor(appearance.shirtColor, Color{34, 184, 207, 255});
@@ -135,14 +137,24 @@ void DrawAvatar(Vector3 center, const NetworkPlayerSnapshot& appearance, Color i
     // The model's authored front is +Z, while yaw 0 looks toward -Z.
     rlPushMatrix();
     rlTranslatef(center.x, center.y, center.z);
-    rlRotatef((facingYaw + PI) * RAD2DEG, 0.0f, 1.0f, 0.0f);
+    // The camera/player forward vector is (sin(yaw), 0, -cos(yaw));
+    // rotating the authored +Z-facing avatar by PI-yaw matches that vector.
+    rlRotatef((PI - facingYaw) * RAD2DEG, 0.0f, 1.0f, 0.0f);
     DrawCubeV({0.0f, 0.34f, 0.0f}, {0.76f, 0.88f, 0.38f}, shirt);
-    DrawSphere({0.0f, 1.02f, 0.0f}, 0.27f, skin);
+    if (headSphereModel && headSphereModel->meshCount > 0) {
+        const Vector3 headPosition{0.0f, 1.02f, 0.0f};
+        DrawModelSafe(headSphereModel, &headPosition, 0.6f, &skin);
+    } else {
+        DrawSphereEx({0.0f, 1.02f, 0.0f}, 0.27f, 32, 32, skin);
+    }
     DrawCubeV({-0.50f, 0.35f, 0.0f}, {0.22f, 0.68f, 0.24f}, skin);
     DrawCubeV({0.50f, 0.35f, 0.0f}, {0.22f, 0.68f, 0.24f}, skin);
     DrawCubeV({-0.20f, -0.39f, 0.0f}, {0.31f, 0.72f, 0.32f}, pants);
     DrawCubeV({0.20f, -0.39f, 0.0f}, {0.31f, 0.72f, 0.32f}, pants);
     for (const std::string& accessory : appearance.accessories) {
+        const bool hasPublishedModel = std::any_of(appearance.accessoryAssets.begin(), appearance.accessoryAssets.end(),
+            [&](const auto& asset) { return asset.clientStyle == accessory; });
+        if (hasPublishedModel) continue;
         if (accessory == "cap-blue") {
             DrawCylinder({0.0f, 1.30f, 0.0f}, 0.28f, 0.25f, 0.12f, 12, Color{76, 141, 255, 255});
             DrawCubeV({0.0f, 1.25f, 0.18f}, {0.36f, 0.06f, 0.24f}, Color{55, 116, 233, 255});
@@ -152,6 +164,7 @@ void DrawAvatar(Vector3 center, const NetworkPlayerSnapshot& appearance, Color i
             DrawCylinder({0.0f, 1.36f, 0.0f}, 0.33f, 0.33f, 0.045f, 24, Color{114, 228, 239, 255});
         }
     }
+    avatarAssets.Draw(appearance);
     rlPopMatrix();
 }
 
@@ -183,38 +196,38 @@ void DrawDisconnectDialog(const Font *font, DisconnectKind reason) {
     const Vector2 mouse = GetMousePosition();
     const bool leaveHover = CheckCollisionPointRec(mouse, layout.leave);
 
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{5, 12, 20, 178});
-    DrawRectangleRounded(layout.panel, 0.075f, 16, Color{20, 30, 42, 255});
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{8, 11, 17, 205});
+    DrawRectangleRounded(layout.panel, 0.075f, 16, Color{19, 19, 26, 255});
     DrawRectangleRounded(Rectangle{layout.panel.x, layout.panel.y, layout.panel.width, 5.0f},
-                         0.2f, 8, Color{44, 202, 220, 255});
+                         0.2f, 8, Color{0, 210, 255, 255});
     DrawLineEx(Vector2{layout.panel.x + 22.0f, layout.panel.y + 58.0f},
                Vector2{layout.panel.x + layout.panel.width - 22.0f, layout.panel.y + 58.0f},
-               1.0f, Color{65, 82, 99, 255});
+               1.0f, Color{55, 63, 76, 255});
 
     const char *message = "Connection to the Blubox server was interrupted.";
-    const char *code = "BLX-1001  ·  Connection lost";
+    const char *code = "BLX-1001 | Connection lost";
     if (reason == DisconnectKind::Kicked) {
         message = "The server ended your session.";
-        code = "BLX-1002  ·  Session ended";
+        code = "BLX-1002 | Session ended";
     } else if (reason == DisconnectKind::JoinRejected) {
         message = "Blubox couldn't validate your join request.";
-        code = "BLX-1003  ·  Join not accepted";
+        code = "BLX-1003 | Join not accepted";
     } else if (reason == DisconnectKind::ConnectionFailed) {
         message = "Couldn't reach this Blubox server.";
-        code = "BLX-1004  ·  Server unavailable";
+        code = "BLX-1004 | Server unavailable";
     }
 
     DrawCenteredText(font, "Connection interrupted", centerX, layout.panel.y + 20.0f, 21.0f,
-                     Color{238, 246, 252, 255});
+                     Color{246, 248, 252, 255});
     DrawCenteredText(font, message, centerX, layout.panel.y + 88.0f, 16.0f,
-                     Color{199, 214, 226, 255});
+                     Color{190, 198, 212, 255});
     DrawCenteredText(font, code, centerX, layout.panel.y + 118.0f, 14.0f,
-                     Color{117, 183, 199, 255});
+                     Color{0, 210, 255, 255});
 
     DrawRectangleRounded(layout.leave, 0.18f, 8,
-                         leaveHover ? Color{75, 220, 231, 255} : Color{42, 192, 210, 255});
+                         leaveHover ? Color{56, 224, 255, 255} : Color{0, 210, 255, 255});
     DrawCenteredText(font, "Leave server", centerX, layout.leave.y + 10.0f, 16.0f,
-                     Color{8, 24, 33, 255});
+                     Color{19, 19, 26, 255});
 }
 
 float HashNoise(int x, int y, int z) {
@@ -753,7 +766,8 @@ void GameClient::DrawFrame() {
     }
 
     const Color characterTint = PlayerColorForSession(networkClient_.SessionId(), playerColorSlots_);
-    DrawAvatar(playerPosition, localAppearance, characterTint, cameraYaw_);
+    DrawAvatar(playerPosition, localAppearance, characterTint, avatarAssets_,
+               characterModelsReady_ ? &characterSphereModel_ : nullptr, cameraYaw_);
 
     // Nameplates are textured billboards. Switch back to Raylib's default
     // texture shader after the lit world geometry so their glyph texture is sampled.
@@ -796,7 +810,8 @@ void GameClient::DrawFrame() {
 
         const Vector3 remotePosition{remote.x, remote.y, remote.z};
         const Color remoteTint = PlayerColorForSession(remote.sessionId, playerColorSlots_);
-        DrawAvatar(remotePosition, remote, remoteTint);
+        DrawAvatar(remotePosition, remote, remoteTint, avatarAssets_,
+                   characterModelsReady_ ? &characterSphereModel_ : nullptr);
 
         const Vector3 labelPosition{remote.x, remote.y + 1.62f, remote.z};
         drawNameplate(remote.displayName, remote.isVerified, labelPosition);
