@@ -41,6 +41,9 @@ enum class ClassId : std::uint8_t {
   TextLabel,
   TextButton,
   MeshPart,
+  Shirt,
+  Pants,
+  Accessory,
   Light,
   Camera,
   SpawnLocation,
@@ -72,6 +75,10 @@ struct InstanceRecord {
   bool enabled = true;
   float duration = 0.0f;
   float transparency = 0.0f;
+  // UI text lives in the DataModel so scripts and editor preview share state.
+  std::string text;
+  std::array<std::uint8_t, 4> textColor{242, 246, 252, 255};
+  float textTransparency = 0.0f;
   float brightness = 1.0f;
   std::string source;
   std::string sourceId;

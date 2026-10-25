@@ -804,6 +804,18 @@ void GameClient::DrawFrame() {
     // texture shader after the lit world geometry so their glyph texture is sampled.
     if (lightingShader_.id != 0) EndShaderMode();
 
+    const float characterHalfHeight = Player::kHalfHeightOfCylinder + Player::kRadius;
+    JPH::RVec3 shadowGround;
+    const Vector3 localFeet{playerPosition.x, playerPosition.y - characterHalfHeight,
+                            playerPosition.z};
+    if (physicsWorld_.RaycastGroundAt(JPH::RVec3(localFeet.x, localFeet.y, localFeet.z),
+                                      80.0f, shadowGround)) {
+        avatarAssets_.DrawGroundShadow(
+            Vector3{static_cast<float>(shadowGround.GetX()), static_cast<float>(shadowGround.GetY()),
+                    static_cast<float>(shadowGround.GetZ())},
+            localFeet, localAppearance, cameraYaw_, NormalizeVector(kSunToLight));
+    }
+
     // The rendered head's top is at playerY + 1.29. Keep the billboard's
     // center high enough that its lower edge clears the head instead of
     // clipping through it from the camera's angle.
@@ -859,6 +871,17 @@ void GameClient::DrawFrame() {
         const Color remoteTint = PlayerColorForSession(remote.sessionId, playerColorSlots_);
         DrawAvatar(remotePosition, remote, remoteTint, avatarAssets_,
                    characterModelsReady_ ? &characterSphereModel_ : nullptr);
+
+        const Vector3 remoteFeet{remote.x, remote.y - characterHalfHeight, remote.z};
+        JPH::RVec3 remoteGround;
+        if (physicsWorld_.RaycastGroundAt(JPH::RVec3(remoteFeet.x, remoteFeet.y, remoteFeet.z),
+                                          80.0f, remoteGround)) {
+            avatarAssets_.DrawGroundShadow(
+                Vector3{static_cast<float>(remoteGround.GetX()),
+                        static_cast<float>(remoteGround.GetY()),
+                        static_cast<float>(remoteGround.GetZ())},
+                remoteFeet, remote, 0.0f, NormalizeVector(kSunToLight));
+        }
 
         const Vector3 labelPosition{remote.x, remote.y + 1.62f, remote.z};
         nameplates.push_back(Nameplate{remote.displayName, remote.isVerified, labelPosition,

@@ -11,6 +11,9 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      CCACHE_DIR: ${{ runner.temp }}/blubox-ccache
+      CCACHE_MAXSIZE: 3G
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -23,21 +26,37 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/blubox-ccache
+          key: ${{ runner.os }}-ucrt64-ccache-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-ucrt64-ccache-${{ github.ref_name }}-
+            ${{ runner.os }}-ucrt64-ccache-client-v
+            ${{ runner.os }}-ucrt64-ccache-
 
       - name: Configure client
         shell: msys2 {0}
-        run: cmake -S client -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S client -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build client
         shell: msys2 {0}
-        run: cmake --build build --target blubox_client --parallel 1
+        run: cmake --build build --target blubox_client --parallel 2
 
       - name: Build update launchers
         shell: msys2 {0}
         run: |
-          cmake --build build --target blubox_launcher --parallel 1
-          cmake --build build --target blubox_studio_launcher --parallel 1
+          cmake --build build --target blubox_launcher --parallel 2
+          cmake --build build --target blubox_studio_launcher --parallel 2
+
+      - name: Show compiler cache statistics
+        if: always()
+        shell: msys2 {0}
+        run: ccache --show-stats
 
       - name: Compute client checksum
         id: checksum

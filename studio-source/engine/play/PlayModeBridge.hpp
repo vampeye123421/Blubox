@@ -29,6 +29,7 @@ class PlayModeBridge {
   void resume();
   [[nodiscard]] PlayModeState state() const noexcept { return state_.load(); }
   [[nodiscard]] bool clientAuthenticated() const noexcept;
+  [[nodiscard]] bool usesStandaloneClient() const noexcept { return standaloneProcess_ != nullptr; }
   [[nodiscard]] PlayModeType mode() const noexcept { return config_.mode; }
   [[nodiscard]] const studio::MapDocument* clientWorld() const noexcept;
   [[nodiscard]] std::optional<studio::MapDocument> serverWorldSnapshot() const;
@@ -46,5 +47,7 @@ class PlayModeBridge {
   std::jthread serverThread_;
   mutable std::mutex errorMutex_;
   std::string lastError_;
+  void* standaloneProcess_ = nullptr;
+  std::wstring standaloneMapDirectory_;
 };
 }

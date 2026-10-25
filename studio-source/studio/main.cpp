@@ -335,6 +335,10 @@ struct StudioState {
     std::string publishDescription;
     std::string publishError;
     std::string lastPublishedSlug;
+    bool publishAsUpdate = false;
+    bool ownedGamesLoaded = false;
+    std::string selectedUpdateWorldId;
+    std::vector<blubox::studio::OwnedPublishedGame> ownedGames;
     std::string cloudWorldId;
     std::string websiteToken;
     std::string displayName;
@@ -407,6 +411,7 @@ void AppendOutput(StudioState& state, std::string level, std::string message) {
 
 bool DeleteSelectedEntity(StudioState& state) {
     if (state.selectedEntity < 0 || state.selectedEntity >= static_cast<int>(state.map.entities.size())) return false;
+
     const Entity& selected = state.map.entities[static_cast<std::size_t>(state.selectedEntity)];
     const std::string deletedId = selected.id;
     const std::string deletedName = selected.name;
@@ -1658,6 +1663,8 @@ void DrawTopBar(StudioState& state) {
             state.publishTitle = state.map.name;
             state.publishDescription.clear();
             state.publishError.clear();
+            state.publishAsUpdate = false;
+            state.selectedUpdateWorldId.clear();
             state.showPublishDialog = true;
         }
         ImGui::Separator();
@@ -1697,6 +1704,7 @@ void DrawTopBar(StudioState& state) {
         auto startMode = [&](blubox::engine::play::PlayModeType mode) {
             blubox::engine::play::PlayConfig config;
             config.mode = mode;
+            config.playerDisplayName = state.displayName.empty() ? "Player" : state.displayName;
             if (mode == blubox::engine::play::PlayModeType::PlayHere) {
                 const Vector3 direction = Vector3Normalize(Vector3Subtract(state.camera.target, state.camera.position));
                 const Vector3 position = Vector3Add(state.camera.position, Vector3Scale(direction, 5.0f));
@@ -1711,7 +1719,7 @@ void DrawTopBar(StudioState& state) {
             state.editorCamera = state.camera;
             state.editorCameraSaved = true;
             if (state.playMode->start(config, error)) {
-                if (mode != blubox::engine::play::PlayModeType::Run) {
+                if (mode != blubox::engine::play::PlayModeType::Run && !state.playMode->usesStandaloneClient()) {
                     const Vector3 look = Vector3Normalize(Vector3Subtract(state.camera.target, state.camera.position));
                     state.gameCamera = {};
                     // The client uses yaw 0 for -Z and stores orbit elevation as
@@ -1761,6 +1769,8 @@ void DrawTopBar(StudioState& state) {
         state.publishTitle = state.map.name;
         state.publishDescription.clear();
         state.publishError.clear();
+        state.publishAsUpdate = false;
+        state.selectedUpdateWorldId.clear();
         state.showPublishDialog = true;
     }
     ImGui::TextDisabled("%s%s", state.map.name.c_str(), state.dirty ? " *" : "");
@@ -2048,11 +2058,52 @@ void DrawPublishDialog(StudioState& state) {
     ImGui::OpenPopup("Publish game to Blubox");
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(580.0f, 390.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(600.0f, 470.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Publish game to Blubox", &state.showPublishDialog,
                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
         ImGui::TextColored(Rgb(0x00d2ff), "PUBLISH YOUR GAME");
-        ImGui::TextWrapped("Choose a name and tell players what your world is about. New games go through website review.");
+        ImGui::TextWrapped("Publish creates a new game every time. Choose Update existing game to replace one of your own games.");
+        ImGui::Spacing();
+        if (ImGui::RadioButton("Publish as a new game", !state.publishAsUpdate)) {
+            state.publishAsUpdate = false;
+            state.publishError.clear();
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Update existing game", state.publishAsUpdate)) {
+            state.publishAsUpdate = true;
+            state.publishError.clear();
+            if (!state.ownedGamesLoaded) {
+                std::string error;
+                state.ownedGamesLoaded = state.api.ListOwnedGames(state.websiteToken, state.ownedGames, error);
+                if (!state.ownedGamesLoaded) state.publishError = error;
+            }
+        }
+        if (state.publishAsUpdate) {
+            if (!state.ownedGamesLoaded) {
+                ImGui::TextWrapped("Your games could not be loaded. Switch back to new game and retry, or reopen this dialog.");
+            } else if (state.ownedGames.empty()) {
+                ImGui::TextDisabled("You do not have any games available to update.");
+            } else {
+                int selected = -1;
+                for (std::size_t i = 0; i < state.ownedGames.size(); ++i) {
+                    if (state.ownedGames[i].worldId == state.selectedUpdateWorldId) selected = static_cast<int>(i);
+                }
+                const char* preview = selected >= 0 ? state.ownedGames[static_cast<std::size_t>(selected)].title.c_str() : "Select a game...";
+                if (ImGui::BeginCombo("Game to update", preview)) {
+                    for (std::size_t i = 0; i < state.ownedGames.size(); ++i) {
+                        const auto& game = state.ownedGames[i];
+                        const bool isSelected = game.worldId == state.selectedUpdateWorldId;
+                        const std::string label = game.title + "  (" + game.status + ")##" + game.worldId;
+                        if (ImGui::Selectable(label.c_str(), isSelected)) {
+                            state.selectedUpdateWorldId = game.worldId;
+                            state.publishTitle = game.title;
+                        }
+                        if (isSelected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+        }
         ImGui::Spacing();
         ImGui::TextDisabled("GAME NAME");
         ImGui::SetNextItemWidth(-1.0f);
@@ -2068,7 +2119,11 @@ void DrawPublishDialog(StudioState& state) {
         }
         ImGui::Spacing();
         const bool canPublish = !state.publishing && !state.publishTitle.empty() &&
-                                state.publishTitle.size() <= 64 && state.publishDescription.size() <= 1000;
+                                state.publishTitle.size() <= 64 && state.publishDescription.size() <= 1000 &&
+                                (!state.publishAsUpdate || (!state.selectedUpdateWorldId.empty() &&
+                                    std::any_of(state.ownedGames.begin(), state.ownedGames.end(), [&](const auto& game) {
+                                        return game.worldId == state.selectedUpdateWorldId;
+                                    })));
         const float actionsWidth = 96.0f + ImGui::GetStyle().ItemSpacing.x + 152.0f;
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
             ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - actionsWidth));
@@ -2087,7 +2142,9 @@ void DrawPublishDialog(StudioState& state) {
             std::string result;
             std::string error;
             if (state.api.PublishGame(state.map, state.publishTitle, state.publishDescription,
-                                      state.websiteToken, result, error)) {
+                                      state.websiteToken, result, error,
+                                      state.publishAsUpdate ? "update" : "create",
+                                      state.publishAsUpdate ? state.selectedUpdateWorldId : std::string_view{})) {
                 state.dirty = true;
                 SetStatus(state, result);
                 state.showPublishDialog = false;
@@ -3067,8 +3124,11 @@ void DrawViewport(StudioState& state) {
     const bool simulationActive = playState == blubox::engine::play::PlayModeState::Running ||
                                   playState == blubox::engine::play::PlayModeState::Paused;
     const bool gameClientView = simulationActive &&
-        state.playMode->mode() != blubox::engine::play::PlayModeType::Run;
-    if (gameClientView)
+        state.playMode->mode() != blubox::engine::play::PlayModeType::Run &&
+        !state.playMode->usesStandaloneClient();
+    if (simulationActive && state.playMode->usesStandaloneClient())
+        ImGui::TextDisabled("Standalone client playtest is open · Stop to close it and return to editing");
+    else if (gameClientView)
         ImGui::TextDisabled("Play test · click to capture · Esc releases the pointer · Tab toggles capture");
     else if (simulationActive)
         ImGui::TextDisabled("Run mode · server simulation view · Stop to return to editing");
@@ -3083,12 +3143,12 @@ void DrawViewport(StudioState& state) {
         const ImVec2 imageMax(imageMin.x + imageSize.x, imageMin.y + imageSize.y);
         const ImTextureID viewportTexture =
             static_cast<ImTextureID>(static_cast<intptr_t>(state.viewport.texture.id));
-        if (simulationActive) {
+        if (simulationActive && !state.playMode->usesStandaloneClient()) {
             // In Play/Run the client/server render target is a normal ImGui image.
             // The edit viewport keeps it as draw-list background so ImGuizmo can
             // still receive drags without an image item intercepting the hover.
             ImGui::Image(viewportTexture, imageSize, ImVec2(0, 1), ImVec2(1, 0));
-        } else {
+        } else if (!simulationActive) {
             ImGui::GetWindowDrawList()->AddImage(
                 viewportTexture, imageMin, imageMax, ImVec2(0, 1), ImVec2(1, 0));
         }
@@ -3155,7 +3215,7 @@ void DrawViewport(StudioState& state) {
         }
         // Reserve edit-mode viewport layout after ImGuizmo has handled input.
         // ImGui::Image already reserves the game-view area during simulation.
-        if (!simulationActive) ImGui::Dummy(imageSize);
+        if (!simulationActive || state.playMode->usesStandaloneClient()) ImGui::Dummy(imageSize);
         if (!simulationActive && state.viewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !guiClickHandled &&
             !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
             const ImVec2 mouse = ImGui::GetIO().MousePos;
@@ -3383,7 +3443,8 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
                 const MapDocument* clientWorld = state.playMode->clientWorld();
                 if (clientWorld) {
                     const auto character = std::find_if(clientWorld->entities.begin(), clientWorld->entities.end(),
-                        [](const Entity& item) { return item.name == "LocalPlayerCharacter"; });
+                        [](const Entity& item) { return item.properties.is_object() &&
+                            item.properties.value("RuntimeLocalPlayerCharacter", false); });
                     if (character != clientWorld->entities.end()) {
                     using namespace blubox::engine::input;
                     PhysicalInput physical;
@@ -3510,6 +3571,13 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
 } // namespace
 
 int main(int argc, char** argv) {
+    bool startupDebug = blubox::studio::DebugConsoleRequested();
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view(argv[i]) == "--debug-console") startupDebug = true;
+    }
+    blubox::studio::AttachDiagnosticConsole(startupDebug);
+    blubox::studio::InitializeDiagnostics(startupDebug);
+    blubox::studio::LogDiagnostic("INFO", "Studio process started; checking for updates.");
     if (TryRunStudioUpdate(argc, argv)) return 0;
 
     std::string startupToken;

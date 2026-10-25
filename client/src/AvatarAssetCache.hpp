@@ -14,6 +14,9 @@ public:
     bool DrawBaseCharacter(Vector3 feetPosition, const NetworkPlayerSnapshot& avatar,
                            float facingYaw);
     void Draw(const NetworkPlayerSnapshot& avatar, bool drawClothingOverlays = true);
+    void DrawGroundShadow(Vector3 groundPoint, Vector3 feetPosition,
+                          const NetworkPlayerSnapshot& avatar, float facingYaw,
+                          Vector3 sunToLight);
     void Unload() noexcept;
 
 private:
@@ -22,6 +25,11 @@ private:
     Model baseCharacter_{};
     BoundingBox baseCharacterBounds_{};
     std::unordered_map<std::string, int> baseCharacterMaterials_;
+    // The client owns this shader; cached accessories only borrow the handle.
+    // Assigning it per material is required because DrawModelEx uses each
+    // material's shader instead of inheriting BeginShaderMode's active shader.
+    Shader lightingShader_{};
+    Texture2D shadowTexture_{};
     float baseCharacterScale_ = 1.0f;
     bool baseCharacterLoaded_ = false;
     TextureEntry& texture(const std::string& url);

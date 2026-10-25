@@ -1,4 +1,5 @@
 #include "StudioBootstrap.hpp"
+#include "Diagnostics.hpp"
 
 #include <raylib.h>
 #include <nlohmann/json.hpp>
@@ -118,7 +119,7 @@ std::vector<uint8_t> HttpGet(std::wstring_view url, const std::function<void(siz
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connection);
         WinHttpCloseHandle(session);
-        throw std::runtime_error("The Studio update server returned an unsuccessful response.");
+        throw std::runtime_error("The Studio update server returned HTTP " + std::to_string(status) + ".");
     }
 
     DWORD totalBytes = 0;
@@ -292,12 +293,25 @@ fs::path CurrentExecutable() {
 
 bool TryRunStudioUpdate(int argc, char** argv) {
 #ifdef _WIN32
-    if (HasReadyFlag(argc, argv) || std::string_view(BLUBOX_STUDIO_MANIFEST_URL).empty()) return false;
+    if (HasReadyFlag(argc, argv)) {
+        blubox::studio::LogDiagnostic("INFO", "Updater handoff accepted; starting the verified Studio build.");
+        return false;
+    }
+    if (std::string_view(BLUBOX_STUDIO_MANIFEST_URL).empty()) {
+        blubox::studio::LogDiagnostic("WARNING", "Updater skipped because no manifest URL is configured.");
+        return false;
+    }
     try {
+        blubox::studio::LogDiagnostic("INFO", "Checking the Studio update manifest.");
         const auto manifestBytes = HttpGet(Utf8ToWide(BLUBOX_STUDIO_MANIFEST_URL));
         const UpdateManifest manifest = ParseManifest(std::string_view(
             reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size()));
-        if (!IsNewer(manifest.version, BLUBOX_STUDIO_VERSION)) return false;
+        if (!IsNewer(manifest.version, BLUBOX_STUDIO_VERSION)) {
+            blubox::studio::LogDiagnostic("INFO", "Studio is current at version " BLUBOX_STUDIO_VERSION ".");
+            return false;
+        }
+        blubox::studio::LogDiagnostic("INFO", std::string("Studio update available: ") + BLUBOX_STUDIO_VERSION +
+            " -> " + manifest.version + ".");
 
         wchar_t localAppData[MAX_PATH]{};
         const DWORD chars = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
@@ -324,6 +338,7 @@ bool TryRunStudioUpdate(int argc, char** argv) {
         }
 
         if (!cachedUpdateIsValid) {
+            blubox::studio::LogDiagnostic("INFO", "Downloading and verifying Studio update.");
             const auto updateBytes = HttpGet(Utf8ToWide(manifest.downloadUrl),
                 [](size_t received, size_t total) { DrawProgress("Downloading Studio update", received, total); });
             if (_stricmp(Sha256(updateBytes).c_str(), manifest.sha256.c_str()) != 0) {
@@ -341,16 +356,19 @@ bool TryRunStudioUpdate(int argc, char** argv) {
             }
             fs::remove(executable);
             fs::rename(staging, executable);
+            blubox::studio::LogDiagnostic("INFO", "Studio executable installed in the versioned cache.");
         }
 
         const fs::path sourceFonts = current.parent_path() / L"assets" / L"editor" / L"fonts";
         fs::copy(sourceFonts, versionDirectory / L"assets" / L"editor" / L"fonts",
                  fs::copy_options::recursive | fs::copy_options::overwrite_existing);
         if (IsWindowReady()) CloseWindow();
+        blubox::studio::LogDiagnostic("INFO", "Starting the verified Studio update process.");
         LaunchUpdated(executable, argc, argv);
         return true;
     } catch (const std::exception& error) {
         if (IsWindowReady()) CloseWindow();
+        blubox::studio::LogDiagnostic("ERROR", std::string("Studio updater failed: ") + error.what());
         OutputDebugStringA((std::string("Blubox Studio updater: ") + error.what() + "\n").c_str());
         return false;
     }

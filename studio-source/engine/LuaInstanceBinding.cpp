@@ -86,6 +86,12 @@ const char *className(ClassId id) {
     return "CornerWedgePart";
   case ClassId::MeshPart:
     return "MeshPart";
+  case ClassId::Shirt:
+    return "Shirt";
+  case ClassId::Pants:
+    return "Pants";
+  case ClassId::Accessory:
+    return "Accessory";
   case ClassId::SpawnLocation:
     return "SpawnLocation";
   case ClassId::ScreenGui:
@@ -118,6 +124,9 @@ bool classId(std::string_view name, ClassId &out) {
                                                                      {"WedgePart", ClassId::WedgePart},
                                                                      {"CornerWedgePart", ClassId::CornerWedgePart},
                                                                      {"MeshPart", ClassId::MeshPart},
+                                                                     {"Shirt", ClassId::Shirt},
+                                                                     {"Pants", ClassId::Pants},
+                                                                     {"Accessory", ClassId::Accessory},
                                                                      {"SpawnLocation", ClassId::SpawnLocation},
                                                                      {"ScreenGui", ClassId::ScreenGui},
                                                                      {"Frame", ClassId::Frame},
@@ -713,6 +722,21 @@ int instanceIndex(lua_State *L) {
     pushColor(L, rec->color);
     return 1;
   }
+  if (std::strcmp(key, "Text") == 0 &&
+      (rec->classId == ClassId::TextLabel || rec->classId == ClassId::TextButton)) {
+    lua_pushlstring(L, rec->text.data(), rec->text.size());
+    return 1;
+  }
+  if (std::strcmp(key, "TextColor3") == 0 &&
+      (rec->classId == ClassId::TextLabel || rec->classId == ClassId::TextButton)) {
+    pushColor(L, rec->textColor);
+    return 1;
+  }
+  if (std::strcmp(key, "TextTransparency") == 0 &&
+      (rec->classId == ClassId::TextLabel || rec->classId == ClassId::TextButton)) {
+    lua_pushnumber(L, rec->textTransparency);
+    return 1;
+  }
   if (std::strcmp(key, "Anchored") == 0) {
     lua_pushboolean(L, rec->anchored);
     return 1;
@@ -878,6 +902,31 @@ int instanceNewIndex(lua_State *L) {
       return 0;
     }
     rec->color = c;
+  } else if (std::strcmp(key, "Text") == 0 &&
+             (rec->classId == ClassId::TextLabel || rec->classId == ClassId::TextButton)) {
+    size_t length = 0;
+    const char *value = luaL_checklstring(L, 3, &length);
+    if (length > 16 * 1024) {
+      luaL_error(L, "Text exceeds 16 KiB");
+      return 0;
+    }
+    rec->text.assign(value, length);
+  } else if (std::strcmp(key, "TextColor3") == 0 &&
+             (rec->classId == ClassId::TextLabel || rec->classId == ClassId::TextButton)) {
+    std::array<std::uint8_t, 4> color{};
+    if (!readColor(L, 3, color)) {
+      luaL_error(L, "TextColor3 expects Color3.new or Color3.fromRGB");
+      return 0;
+    }
+    rec->textColor = color;
+  } else if (std::strcmp(key, "TextTransparency") == 0 &&
+             (rec->classId == ClassId::TextLabel || rec->classId == ClassId::TextButton)) {
+    const double value = luaL_checknumber(L, 3);
+    if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
+      luaL_error(L, "TextTransparency must be a number from 0 to 1");
+      return 0;
+    }
+    rec->textTransparency = static_cast<float>(value);
   } else if (std::strcmp(key, "Anchored") == 0)
     rec->anchored = lua_toboolean(L, 3) != 0;
   else if (std::strcmp(key, "Visible") == 0)

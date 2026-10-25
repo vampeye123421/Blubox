@@ -36,6 +36,8 @@ std::string ClassName(ClassId id) {
     case ClassId::Part: return "Part"; case ClassId::SpawnLocation: return "SpawnLocation";
     case ClassId::Sphere: return "Sphere"; case ClassId::WedgePart: return "WedgePart";
     case ClassId::CornerWedgePart: return "CornerWedgePart"; case ClassId::MeshPart: return "MeshPart";
+    case ClassId::Shirt: return "Shirt"; case ClassId::Pants: return "Pants";
+    case ClassId::Accessory: return "Accessory";
     case ClassId::Model: return "Model"; case ClassId::Folder: return "Folder";
     case ClassId::Script: return "Script"; case ClassId::LocalScript: return "LocalScript";
     case ClassId::Light: return "Light"; case ClassId::Camera: return "Camera";

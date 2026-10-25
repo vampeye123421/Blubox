@@ -181,7 +181,7 @@ nlohmann::json MapDocument::ToJson() const {
 Entity& MapDocument::AddEntity(std::string kind) {
     if (kind != "block" && kind != "sphere" && kind != "wedgepart" && kind != "cornerwedgepart" &&
         kind != "model" && kind != "folder" && kind != "spawnlocation" && kind != "remoteevent" && kind != "remotefunction" &&
-        kind != "meshpart" && kind != "decal" &&
+        kind != "meshpart" && kind != "decal" && kind != "shirt" && kind != "pants" && kind != "accessory" &&
         kind != "script" && kind != "localscript" && kind != "screengui" && kind != "frame" &&
         kind != "textlabel" && kind != "textbutton") {
         throw std::runtime_error("Unsupported object kind.");
@@ -195,7 +195,8 @@ Entity& MapDocument::AddEntity(std::string kind) {
                   kind == "remotefunction" ? "RemoteFunction" : kind == "script" ? "Script" :
                   kind == "localscript" ? "LocalScript" : kind == "screengui" ? "ScreenGui" :
                   kind == "frame" ? "Frame" : kind == "textlabel" ? "TextLabel" :
-                  kind == "textbutton" ? "TextButton" : kind == "spawnlocation" ? "SpawnLocation" : kind == "meshpart" ? "MeshPart" : kind == "decal" ? "Decal" : "Part";
+                  kind == "textbutton" ? "TextButton" : kind == "spawnlocation" ? "SpawnLocation" : kind == "meshpart" ? "MeshPart" :
+                  kind == "shirt" ? "Shirt" : kind == "pants" ? "Pants" : kind == "accessory" ? "Accessory" : kind == "decal" ? "Decal" : "Part";
     entity.kind = std::move(kind);
     if (entity.kind == "spawnlocation") {
         entity.transform.scale = {4.0f, 1.0f, 4.0f};

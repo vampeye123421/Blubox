@@ -192,6 +192,9 @@ struct PhysicsWorld::Impl {
   ObjectVsBroadFilter objectVsBroad;
   ObjectPairFilter objectPair;
   JPH::PhysicsSystem system;
+  // CharacterVirtual controllers are not registered in PhysicsSystem, so
+  // explicitly include every active controller in each character sweep.
+  JPH::CharacterVsCharacterCollisionSimple characterVsCharacter;
   JPH::TempAllocatorImpl temporary{10 * 1024 * 1024};
   JPH::JobSystemThreadPool jobs{
       JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
@@ -283,7 +286,11 @@ void PhysicsWorld::removeBody(InstanceHandle h) {
     impl_->bodyIds.erase(i);
     lastPhysicsPositions_.erase(h.id);
   }
-  impl_->characters.erase(h.id);
+  if (auto character = impl_->characters.find(h.id); character != impl_->characters.end()) {
+    impl_->characterVsCharacter.Remove(character->second.value);
+    character->second.value->SetListener(nullptr);
+    impl_->characters.erase(character);
+  }
   if (auto* record = registry_.get(h)) record->componentMask &= ~HasPhysics;
   bodies_.erase(h.id);
   humanoids_.erase(h.id);
@@ -308,6 +315,11 @@ bool PhysicsWorld::applyImpulse(InstanceHandle h, Vec3 v) {
 bool PhysicsWorld::addHumanoid(InstanceHandle h, float speed, float jump, float gravity) {
   auto* r = registry_.get(h);
   if (!r || speed <= 0 || jump <= 0 || gravity < 0) return false;
+  if (auto existing = impl_->characters.find(h.id); existing != impl_->characters.end()) {
+    impl_->characterVsCharacter.Remove(existing->second.value);
+    existing->second.value->SetListener(nullptr);
+    impl_->characters.erase(existing);
+  }
   JPH::Ref<JPH::CharacterVirtualSettings> settings = new JPH::CharacterVirtualSettings();
   settings->mMaxSlopeAngle = JPH::DegreesToRadians(50.0f);
   settings->mShape = new JPH::CapsuleShape(0.9f, 0.5f);
@@ -317,6 +329,8 @@ bool PhysicsWorld::addHumanoid(InstanceHandle h, float speed, float jump, float 
                                 JPH::Quat::sIdentity(), packHandle(h), &impl_->system);
   character->SetMaxSlopeAngle(JPH::DegreesToRadians(50.0f));
   character->SetListener(&impl_->characterContactListener);
+  character->SetCharacterVsCharacterCollision(&impl_->characterVsCharacter);
+  impl_->characterVsCharacter.Add(character);
   impl_->characters[h.id] = {character, h};
   humanoids_[h.id] = {speed, jump, gravity, {}, false, HumanoidState::State::Falling};
   return true;
@@ -453,6 +467,8 @@ void PhysicsWorld::step(double dt) {
     for (auto i = impl_->characters.begin(); i != impl_->characters.end();) {
       if (!registry_.alive(i->second.owner)) {
         impl_->touchEvents.forget(i->second.owner);
+        impl_->characterVsCharacter.Remove(i->second.value);
+        i->second.value->SetListener(nullptr);
         humanoids_.erase(i->first);
         inputs_.erase(i->first);
         previousJumpInputs_.erase(i->first);

@@ -3,11 +3,13 @@
 #include <windows.h>
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <mutex>
 #include <string>
 
@@ -35,6 +37,17 @@ bool DebugMarkerExists() {
 bool DebugConsoleRequested() {
     const char* value = std::getenv("BLUBOX_STUDIO_DEBUG");
     return value != nullptr && std::string_view(value) == "1";
+}
+
+void AttachDiagnosticConsole(bool enabled) {
+    if (!enabled) return;
+    if (!AttachConsole(ATTACH_PARENT_PROCESS) && GetLastError() != ERROR_ACCESS_DENIED) {
+        (void)AllocConsole();
+    }
+    (void)std::freopen("CONOUT$", "w", stdout);
+    (void)std::freopen("CONOUT$", "w", stderr);
+    std::cout.setf(std::ios::unitbuf);
+    std::cerr.setf(std::ios::unitbuf);
 }
 
 std::filesystem::path DiagnosticLogPath() {

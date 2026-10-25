@@ -11,6 +11,9 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      CCACHE_DIR: ${{ runner.temp }}/blubox-ccache
+      CCACHE_MAXSIZE: 3G
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -23,7 +26,18 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/blubox-ccache
+          key: ${{ runner.os }}-ucrt64-ccache-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-ucrt64-ccache-${{ github.ref_name }}-
+            ${{ runner.os }}-ucrt64-ccache-v
+            ${{ runner.os }}-ucrt64-ccache-
 
       - name: Install Inno Setup
         shell: pwsh
@@ -31,21 +45,26 @@ jobs:
 
       - name: Configure Client
         shell: msys2 {0}
-        run: cmake -S client -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S client -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Configure Studio
         shell: msys2 {0}
-        run: cmake -S studio-source -B studio-build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S studio-source -B studio-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build apps and installers
         id: build
         shell: pwsh
         run: |
           $version = '${{ github.ref_name }}'.TrimStart('v')
-          ./studio-source/tools/release/Build-Release.ps1 -ClientRoot ./client -ClientBuildDir ./build -StudioRoot ./studio-source -StudioBuildDir ./studio-build -AppVersion $version
+          ./studio-source/tools/release/Build-Release.ps1 -ClientRoot ./client -ClientBuildDir ./build -StudioRoot ./studio-source -StudioBuildDir ./studio-build -AppVersion $version -BuildParallelism 2
           $studioProject = Get-Content './studio-source/CMakeLists.txt' -Raw
           if ($studioProject -notmatch 'project\(BluboxStudio VERSION ([0-9]+(?:\.[0-9]+){1,3})') { throw 'Studio version missing from studio-source/CMakeLists.txt.' }
           "studio_version=$($Matches[1])" >> $env:GITHUB_OUTPUT
+
+      - name: Show compiler cache statistics
+        if: always()
+        shell: msys2 {0}
+        run: ccache --show-stats
 
       - name: Compute checksums
         id: checksums

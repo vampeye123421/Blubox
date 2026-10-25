@@ -186,7 +186,8 @@ bool WebsiteApi::PublishMap(const MapDocument& document, std::string_view access
 
 bool WebsiteApi::PublishGame(MapDocument& document, std::string_view title,
                              std::string_view description, std::string_view accessToken,
-                             std::string& resultMessage, std::string& error) const {
+                             std::string& resultMessage, std::string& error,
+                             std::string_view mode, std::string_view targetWorldId) const {
     try {
         const std::string cleanTitle(title);
         const std::string cleanDescription(description);
@@ -199,8 +200,13 @@ bool WebsiteApi::PublishGame(MapDocument& document, std::string_view title,
         nlohmann::json payload = {
             {"title", cleanTitle},
             {"description", cleanDescription},
+            {"mode", mode == "update" ? "update" : "create"},
             {"map", document.ToJson()},
         };
+        if (mode == "update") {
+            if (!IsSafeWorldId(targetWorldId)) throw std::runtime_error("Choose a valid game to update.");
+            payload["targetWorldId"] = targetWorldId;
+        }
         const HttpResult response = Request(baseUrl_, L"POST", L"api/studio/publish",
                                             accessToken, payload.dump());
         if (response.status < 200 || response.status >= 300) {
@@ -218,13 +224,51 @@ bool WebsiteApi::PublishGame(MapDocument& document, std::string_view title,
         const auto body = nlohmann::json::parse(response.body);
         const std::string publishedWorldId = body.value("worldId", document.worldId);
         if (!publishedWorldId.empty()) document.worldId = publishedWorldId;
+        const bool updating = mode == "update";
         resultMessage = body.value("status", std::string("pending")) == "published"
-            ? "Game published to the website."
-            : "Game submitted to the website for review.";
+            ? (updating ? "Game updated on the website." : "New game published to the website.")
+            : (updating ? "Game update submitted for review." : "New game submitted to the website for review.");
         error.clear();
         return true;
     } catch (const std::exception& exception) {
         resultMessage.clear();
+        error = exception.what();
+        return false;
+    }
+}
+
+bool WebsiteApi::ListOwnedGames(std::string_view accessToken,
+                                std::vector<OwnedPublishedGame>& games,
+                                std::string& error) const {
+    try {
+        const HttpResult response = Request(baseUrl_, L"GET", L"api/studio/games",
+                                            accessToken, {});
+        if (response.status < 200 || response.status >= 300) {
+            std::string detail;
+            try {
+                const auto body = nlohmann::json::parse(response.body);
+                if (body.contains("error") && body.at("error").is_string()) detail = body.at("error").get<std::string>();
+            } catch (...) {}
+            throw std::runtime_error("Could not load your published games (HTTP " +
+                std::to_string(response.status) + ")." + (detail.empty() ? std::string{} : " " + detail));
+        }
+        const auto body = nlohmann::json::parse(response.body);
+        games.clear();
+        if (body.contains("games") && body.at("games").is_array()) {
+            for (const auto& row : body.at("games")) {
+                if (!row.is_object()) continue;
+                OwnedPublishedGame game;
+                game.worldId = row.value("worldId", std::string{});
+                game.title = row.value("title", std::string{});
+                game.slug = row.value("slug", std::string{});
+                game.status = row.value("status", std::string{});
+                if (IsSafeWorldId(game.worldId) && !game.title.empty()) games.push_back(std::move(game));
+            }
+        }
+        error.clear();
+        return true;
+    } catch (const std::exception& exception) {
+        games.clear();
         error = exception.what();
         return false;
     }

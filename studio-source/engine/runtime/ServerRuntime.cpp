@@ -26,13 +26,38 @@ bool ServerRuntime::initialize(const play::RuntimeSnapshot& snapshot, const play
           spawn.rotation[1] = std::atan2(fx, fz);
       }
     }
-    auto& character = document_.AddEntity("block");
-    character.name = "LocalPlayerCharacter";
+    auto& character = document_.AddEntity("model");
+    character.name = config.playerDisplayName.empty() ? "Player" : config.playerDisplayName;
     character.transform.position = spawn.position;
     character.transform.rotation = spawn.rotation;
-    character.transform.scale = {2.0f, 2.8f, 2.0f};
-    character.color = {78, 150, 255, 255};
-    character.properties = {{"RuntimeOnly", true}, {"ClassName", "Character"}, {"Anchored", false}};
+    character.properties = {{"RuntimeOnly", true}, {"ClassName", "Model"},
+                            {"RuntimeLocalPlayerCharacter", true}, {"WalkSpeed", 16.0}, {"JumpPower", 50.0}};
+    const std::string characterId = character.id;
+    const auto addBodyPart = [&](std::string kind, std::string name, std::array<float, 3> position,
+                                 std::array<float, 3> scale, std::array<unsigned char, 4> color) {
+      auto& part = document_.AddEntity(std::move(kind));
+      part.name = std::move(name);
+      part.parent = characterId;
+      part.transform.position = position;
+      part.transform.scale = scale;
+      part.color = color;
+      part.properties["RuntimeOnly"] = true;
+      part.properties["RuntimeVisualOnly"] = true;
+    };
+    addBodyPart("block", "Torso", {0.0f, 0.35f, 0.0f}, {0.78f, 0.9f, 0.4f}, {34, 184, 207, 255});
+    addBodyPart("sphere", "Head", {0.0f, 1.03f, 0.0f}, {0.54f, 0.54f, 0.54f}, {220, 167, 123, 255});
+    addBodyPart("block", "LeftArm", {-0.51f, 0.35f, 0.0f}, {0.22f, 0.68f, 0.24f}, {220, 167, 123, 255});
+    addBodyPart("block", "RightArm", {0.51f, 0.35f, 0.0f}, {0.22f, 0.68f, 0.24f}, {220, 167, 123, 255});
+    addBodyPart("block", "LeftLeg", {-0.2f, -0.39f, 0.0f}, {0.31f, 0.72f, 0.32f}, {51, 75, 120, 255});
+    addBodyPart("block", "RightLeg", {0.2f, -0.39f, 0.0f}, {0.31f, 0.72f, 0.32f}, {51, 75, 120, 255});
+    auto& shirt = document_.AddEntity("shirt");
+    shirt.name = "Shirt";
+    shirt.parent = characterId;
+    shirt.properties = {{"ShirtId", "shirt-cyan-hoodie"}, {"Color", "#22b8cf"}, {"RuntimeOnly", true}};
+    auto& pants = document_.AddEntity("pants");
+    pants.name = "Pants";
+    pants.parent = characterId;
+    pants.properties = {{"PantsId", "pants-dark-denim"}, {"Color", "#334b78"}, {"RuntimeOnly", true}};
   }
   try { scene_ = std::make_unique<SceneRuntime>(document_); }
   catch (const std::exception& exception) { error = exception.what(); return false; }
@@ -51,9 +76,13 @@ bool ServerRuntime::initialize(const play::RuntimeSnapshot& snapshot, const play
       !scripts_->load(snapshot.sharedModules, error)) return false;
   physics_ = std::make_unique<PhysicsWorld>(scene_->instances());
   for (const auto& entity : document_.entities) {
+    if (entity.properties.value("RuntimeLocalPlayerCharacter", false)) {
+      localCharacter_ = scene_->find(entity.id);
+      continue;
+    }
+    if (entity.properties.value("RuntimeVisualOnly", false)) continue;
     if (entity.kind != "block" && entity.kind != "spawnlocation" && entity.kind != "sphere" &&
         entity.kind != "wedgepart" && entity.kind != "cornerwedgepart" && entity.kind != "meshpart") continue;
-    if (entity.name == "LocalPlayerCharacter") { localCharacter_ = scene_->find(entity.id); continue; }
     bool anchored = true;
     if (entity.properties.is_object()) {
       if (entity.properties.contains("Anchored") && entity.properties["Anchored"].is_boolean()) anchored = entity.properties["Anchored"].get<bool>();

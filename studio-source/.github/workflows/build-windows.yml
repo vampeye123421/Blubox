@@ -12,8 +12,11 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      CCACHE_DIR: ${{ runner.temp }}/blubox-studio-ccache
+      CCACHE_MAXSIZE: 3G
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -22,12 +25,28 @@ jobs:
           install: >-
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-ccache
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/blubox-studio-ccache
+          key: ${{ runner.os }}-ucrt64-studio-ccache-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-ucrt64-studio-ccache-${{ github.ref_name }}-
+            ${{ runner.os }}-ucrt64-studio-ccache-main-
+            ${{ runner.os }}-ucrt64-studio-ccache-
 
       - name: Configure C++20 Studio
         shell: msys2 {0}
-        run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build Studio
         shell: msys2 {0}
         run: cmake --build build --config Release --parallel 2
+
+      - name: Show compiler cache statistics
+        if: always()
+        shell: msys2 {0}
+        run: ccache --show-stats

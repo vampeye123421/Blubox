@@ -19,6 +19,7 @@ class ServerRuntime {
   void tick(double fixedDelta);
   void shutdown();
   std::uint16_t port() const noexcept { return remote_.boundPort(); }
+  std::size_t connectedClients() const noexcept { return remote_.authenticatedPeerCount(); }
   network::RemoteManager& remoteManager() noexcept { return remote_; }
   const SceneRuntime* scene() const noexcept { return scene_.get(); }
   studio::MapDocument documentSnapshot() const;

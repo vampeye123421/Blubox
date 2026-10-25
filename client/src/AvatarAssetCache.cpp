@@ -107,6 +107,80 @@ Color ParseColor(std::string_view value) {
     return Color{static_cast<unsigned char>(rgb >> 16), static_cast<unsigned char>(rgb >> 8), static_cast<unsigned char>(rgb), 255};
 }
 
+struct AccessoryFit {
+    Vector3 position{};
+    Vector3 center{};
+    Vector3 halfSize{};
+    float scale = 0.0f;
+};
+
+AccessoryFit FitAccessory(const BoundingBox& bounds,
+                         const NetworkPlayerSnapshot::AccessoryAsset& accessory) {
+    const Vector3 size{bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y,
+                       bounds.max.z - bounds.min.z};
+    const float largest = std::max({size.x, size.y, size.z});
+    if (!(largest > 0.00001f) || !std::isfinite(largest)) return {};
+    const Vector3 center{(bounds.min.x + bounds.max.x) * 0.5f,
+                         (bounds.min.y + bounds.max.y) * 0.5f,
+                         (bounds.min.z + bounds.max.z) * 0.5f};
+
+    std::string name = accessory.attachmentName;
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    const bool hat = name.ends_with("hatattachment") || name.ends_with("hairattachment");
+    const bool back = name.find("back") != std::string::npos;
+    const bool face = name.find("face") != std::string::npos;
+    const bool shoulder = name.find("shoulder") != std::string::npos;
+    const bool waist = name.find("waist") != std::string::npos;
+    const float desiredSize = hat ? 0.50f : shoulder ? 0.40f : back ? 0.68f : waist ? 0.50f : face ? 0.32f : 0.44f;
+    const float scale = std::min(desiredSize / largest, 1000.0f) *
+        std::clamp(std::isfinite(accessory.scale) ? accessory.scale : 1.0f, 0.05f, 5.0f);
+    Vector3 anchor{0.0f, 1.93f, face ? 0.34f : 0.31f};
+    if (hat) anchor = Vector3{0.0f, 2.24f, 0.0f};
+    else if (back) anchor = Vector3{0.0f, 1.22f, -0.34f};
+    else if (shoulder) anchor = Vector3{name.find("left") != std::string::npos ? -0.58f : 0.58f, 1.28f, 0.0f};
+    else if (waist) anchor = Vector3{0.0f, 0.10f, 0.0f};
+
+    const Vector3 position{anchor.x - center.x * scale + accessory.offsetX,
+        (hat ? anchor.y - bounds.min.y * scale : anchor.y - center.y * scale) + accessory.offsetY,
+        anchor.z - center.z * scale + accessory.offsetZ};
+    return {position,
+        Vector3{position.x + center.x * scale, position.y + center.y * scale,
+                position.z + center.z * scale},
+        Vector3{size.x * scale * 0.5f, size.y * scale * 0.5f, size.z * scale * 0.5f},
+        scale};
+}
+
+void DrawShadowQuad(Texture2D texture, Vector3 ground, Vector3 center,
+                    float radiusX, float radiusZ, float yaw, unsigned char opacity) {
+    if (!texture.id || radiusX <= 0.01f || radiusZ <= 0.01f) return;
+    constexpr float lift = 0.018f;
+    const float y = ground.y + lift;
+    const float c = std::cos(yaw), s = std::sin(yaw);
+    const auto vertex = [&](float x, float z, float u, float v) {
+        rlTexCoord2f(u, v);
+        rlVertex3f(center.x + x * c - z * s, y, center.z + x * s + z * c);
+    };
+    rlSetTexture(texture.id);
+    rlBegin(RL_QUADS);
+    rlColor4ub(255, 255, 255, opacity);
+    rlNormal3f(0.0f, 1.0f, 0.0f);
+    vertex(-radiusX, -radiusZ, 0.0f, 0.0f);
+    vertex(radiusX, -radiusZ, 1.0f, 0.0f);
+    vertex(radiusX, radiusZ, 1.0f, 1.0f);
+    vertex(-radiusX, radiusZ, 0.0f, 1.0f);
+    rlEnd();
+    rlSetTexture(0);
+}
+
+Vector3 RotateAvatarLocal(Vector3 value, float yaw) {
+    const float rotation = PI - yaw;
+    const float c = std::cos(rotation), s = std::sin(rotation);
+    return Vector3{value.x * c + value.z * s, value.y,
+                   -value.x * s + value.z * c};
+}
+
 void DrawOverlay(Texture2D texture, Rectangle crop, float centerX, float centerY,
                  float width, float height, float frontZ, Color tint) {
     if (!texture.id || texture.width <= 0 || texture.height <= 0) return;
@@ -132,6 +206,7 @@ AvatarAssetCache::~AvatarAssetCache() { Unload(); }
 bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
     if (baseCharacterLoaded_) return baseCharacter_.meshCount > 0;
     baseCharacterLoaded_ = true;
+    lightingShader_ = lightingShader;
 #if defined(_WIN32)
     if (blubox::kR6CharacterDataSize < 20 ||
         blubox::kR6CharacterData[0] != 'g' || blubox::kR6CharacterData[1] != 'l' ||
@@ -302,7 +377,16 @@ AvatarAssetCache::ModelEntry& AvatarAssetCache::model(const std::string& url, co
         if (!file || !file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) return entry;
     }
     entry.model = LoadModel(path.string().c_str());
-    if (entry.model.meshCount > 0) entry.bounds = GetModelBoundingBox(entry.model);
+    if (entry.model.meshCount > 0) {
+        entry.bounds = GetModelBoundingBox(entry.model);
+        // DrawModelEx selects the shader stored on each Model material. The
+        // outer world BeginShaderMode does not override those material shaders,
+        // so without this assignment uploaded accessories stayed unlit.
+        if (lightingShader_.id != 0 && entry.model.materials) {
+            for (int i = 0; i < entry.model.materialCount; ++i)
+                entry.model.materials[i].shader = lightingShader_;
+        }
+    }
     if (entry.model.meshCount > 0 && !textureUrl.empty()) {
         const Texture2D itemMap = itemTexture(textureUrl).texture;
         if (itemMap.id) {
@@ -332,40 +416,68 @@ void AvatarAssetCache::Draw(const NetworkPlayerSnapshot& avatar, bool drawClothi
         Model& asset = entry.model;
         if (!asset.meshCount) continue;
 
-        const Vector3 size{entry.bounds.max.x - entry.bounds.min.x,
-                           entry.bounds.max.y - entry.bounds.min.y,
-                           entry.bounds.max.z - entry.bounds.min.z};
-        const float largest = std::max({size.x, size.y, size.z});
-        if (!(largest > 0.00001f) || !std::isfinite(largest)) continue;
-        const Vector3 center{(entry.bounds.min.x + entry.bounds.max.x) * 0.5f,
-                             (entry.bounds.min.y + entry.bounds.max.y) * 0.5f,
-                             (entry.bounds.min.z + entry.bounds.max.z) * 0.5f};
-
-        std::string name = accessory.attachmentName;
-        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
-            return static_cast<char>(std::tolower(c));
-        });
-        const bool hat = name.ends_with("hatattachment") || name.ends_with("hairattachment");
-        const bool back = name.find("back") != std::string::npos;
-        const bool face = name.find("face") != std::string::npos;
-        const bool shoulder = name.find("shoulder") != std::string::npos;
-        const bool waist = name.find("waist") != std::string::npos;
-        const float desiredSize = hat ? 0.50f : shoulder ? 0.40f : back ? 0.68f : waist ? 0.50f : face ? 0.32f : 0.44f;
-        const float scale = std::min(desiredSize / largest, 1000.0f) *
-            std::clamp(std::isfinite(accessory.scale) ? accessory.scale : 1.0f, 0.05f, 5.0f);
         // These sockets match AvatarPreview.fitAccessory() and its feet-origin
         // rig. Keep offsets in avatar-local space so the saved editor fit is
         // identical in the published client and follows the character yaw.
-        Vector3 anchor{0.0f, 1.93f, face ? 0.34f : 0.31f};
-        if (hat) anchor = Vector3{0.0f, 2.24f, 0.0f};
-        else if (back) anchor = Vector3{0.0f, 1.22f, -0.34f};
-        else if (shoulder) anchor = Vector3{name.find("left") != std::string::npos ? -0.58f : 0.58f, 1.28f, 0.0f};
-        else if (waist) anchor = Vector3{0.0f, 0.10f, 0.0f};
-        Vector3 position{anchor.x - center.x * scale + accessory.offsetX,
-                         (hat ? anchor.y - entry.bounds.min.y * scale : anchor.y - center.y * scale) + accessory.offsetY,
-                         anchor.z - center.z * scale + accessory.offsetZ};
-        DrawModelEx(asset, position, Vector3{0.0f, 1.0f, 0.0f}, 0.0f,
-                    Vector3{scale, scale, scale}, WHITE);
+        const AccessoryFit fit = FitAccessory(entry.bounds, accessory);
+        if (fit.scale <= 0.0f) continue;
+        DrawModelEx(asset, fit.position, Vector3{0.0f, 1.0f, 0.0f}, 0.0f,
+                    Vector3{fit.scale, fit.scale, fit.scale}, WHITE);
+    }
+}
+
+void AvatarAssetCache::DrawGroundShadow(Vector3 groundPoint, Vector3 feetPosition,
+                                        const NetworkPlayerSnapshot& avatar, float facingYaw,
+                                        Vector3 sunToLight) {
+    if (!shadowTexture_.id) {
+        Image image = GenImageColor(64, 64, BLANK);
+        if (!image.data) return;
+        auto* pixels = static_cast<Color*>(image.data);
+        for (int y = 0; y < image.height; ++y) {
+            for (int x = 0; x < image.width; ++x) {
+                const float dx = (x + 0.5f - image.width * 0.5f) / (image.width * 0.5f);
+                const float dy = (y + 0.5f - image.height * 0.5f) / (image.height * 0.5f);
+                const float edge = std::clamp(1.0f - std::sqrt(dx * dx + dy * dy), 0.0f, 1.0f);
+                const auto alpha = static_cast<unsigned char>(std::lround(190.0f * edge * edge));
+                pixels[y * image.width + x] = Color{12, 17, 25, alpha};
+            }
+        }
+        shadowTexture_ = LoadTextureFromImage(image);
+        UnloadImage(image);
+        if (shadowTexture_.id) SetTextureFilter(shadowTexture_, TEXTURE_FILTER_BILINEAR);
+    }
+    if (!shadowTexture_.id) return;
+
+    const float lightY = std::max(0.2f, std::abs(sunToLight.y));
+    const float direction = sunToLight.y >= 0.0f ? -1.0f : 1.0f;
+    const float projectX = direction * sunToLight.x / lightY;
+    const float projectZ = direction * sunToLight.z / lightY;
+    const float bodyHeight = std::max(0.0f, feetPosition.y + 0.85f - groundPoint.y);
+    Vector3 bodyCenter{feetPosition.x + projectX * bodyHeight * 0.45f,
+                       groundPoint.y,
+                       feetPosition.z + projectZ * bodyHeight * 0.45f};
+    const float bodyYaw = PI - facingYaw;
+    DrawShadowQuad(shadowTexture_, groundPoint, bodyCenter, 0.39f, 0.25f,
+                   bodyYaw, 112);
+
+    // Each fitted accessory gets its own soft projected footprint. Reuse the
+    // exact fit transform used for rendering so the shadow follows saved size,
+    // attachment offsets, and character facing.
+    for (const auto& accessory : avatar.accessoryAssets) {
+        const auto it = models_.find(accessory.assetUrl + "\n" + accessory.textureAssetUrl);
+        if (it == models_.end() || it->second.model.meshCount <= 0) continue;
+        const AccessoryFit fit = FitAccessory(it->second.bounds, accessory);
+        if (fit.scale <= 0.0f) continue;
+        const Vector3 localCenter = RotateAvatarLocal(fit.center, facingYaw);
+        const float height = std::max(0.0f, feetPosition.y + localCenter.y - groundPoint.y);
+        Vector3 projected{feetPosition.x + localCenter.x + projectX * height,
+                          groundPoint.y,
+                          feetPosition.z + localCenter.z + projectZ * height};
+        const Vector3 half = fit.halfSize;
+        const float radiusX = std::clamp(std::abs(half.x) + std::abs(half.z), 0.10f, 0.75f);
+        const float radiusZ = std::clamp(std::abs(half.z) + std::abs(half.x) * 0.45f, 0.09f, 0.60f);
+        DrawShadowQuad(shadowTexture_, groundPoint, projected, radiusX, radiusZ,
+                       bodyYaw, 120);
     }
 }
 
@@ -385,4 +497,7 @@ void AvatarAssetCache::Unload() noexcept {
     }
     textures_.clear();
     models_.clear();
+    if (shadowTexture_.id) UnloadTexture(shadowTexture_);
+    shadowTexture_ = Texture2D{};
+    lightingShader_ = Shader{};
 }
