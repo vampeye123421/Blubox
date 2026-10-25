@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -115,17 +116,36 @@ float SmoothStep(float edge0, float edge1, float value) {
 
 float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 
-void DrawLitCharacter(const Model *cylinder, const Model *sphere, Vector3 center,
-                      float halfCylinderHeight, Color tint) {
-    if (cylinder == nullptr || sphere == nullptr) return;
+Color AvatarColor(std::string_view value, Color fallback) {
+    if (value.size() != 7 || value.front() != '#') return fallback;
+    unsigned int rgb = 0;
+    const auto result = std::from_chars(value.data() + 1, value.data() + value.size(), rgb, 16);
+    if (result.ec != std::errc{} || result.ptr != value.data() + value.size()) return fallback;
+    return Color{static_cast<unsigned char>((rgb >> 16) & 0xff),
+                 static_cast<unsigned char>((rgb >> 8) & 0xff),
+                 static_cast<unsigned char>(rgb & 0xff), 255};
+}
 
-    // GenMeshCylinder is centered at its origin. Keeping the mesh centered
-    // between the cap centers avoids overlapping surfaces that shimmer.
-    const Vector3 lowerCap{center.x, center.y - halfCylinderHeight, center.z};
-    const Vector3 upperCap{center.x, center.y + halfCylinderHeight, center.z};
-    DrawModelSafe(cylinder, &center, 1.0f, &tint);
-    DrawModelSafe(sphere, &lowerCap, 1.0f, &tint);
-    DrawModelSafe(sphere, &upperCap, 1.0f, &tint);
+void DrawAvatar(Vector3 center, const NetworkPlayerSnapshot& appearance, Color identityTint) {
+    const Color skin = AvatarColor(appearance.bodyColor, identityTint);
+    const Color shirt = AvatarColor(appearance.shirtColor, Color{34, 184, 207, 255});
+    const Color pants = AvatarColor(appearance.pantsColor, Color{51, 75, 120, 255});
+    DrawCubeV({center.x, center.y + 0.34f, center.z}, {0.76f, 0.88f, 0.38f}, shirt);
+    DrawSphere({center.x, center.y + 1.02f, center.z}, 0.27f, skin);
+    DrawCubeV({center.x - 0.50f, center.y + 0.35f, center.z}, {0.22f, 0.68f, 0.24f}, skin);
+    DrawCubeV({center.x + 0.50f, center.y + 0.35f, center.z}, {0.22f, 0.68f, 0.24f}, skin);
+    DrawCubeV({center.x - 0.20f, center.y - 0.39f, center.z}, {0.31f, 0.72f, 0.32f}, pants);
+    DrawCubeV({center.x + 0.20f, center.y - 0.39f, center.z}, {0.31f, 0.72f, 0.32f}, pants);
+    for (const std::string& accessory : appearance.accessories) {
+        if (accessory == "cap-blue") {
+            DrawCylinder({center.x, center.y + 1.30f, center.z}, 0.28f, 0.25f, 0.12f, 12, Color{76, 141, 255, 255});
+            DrawCubeV({center.x, center.y + 1.25f, center.z + 0.18f}, {0.36f, 0.06f, 0.24f}, Color{55, 116, 233, 255});
+        } else if (accessory == "backpack-cyan") {
+            DrawCubeV({center.x, center.y + 0.34f, center.z - 0.26f}, {0.48f, 0.52f, 0.22f}, Color{34, 184, 207, 255});
+        } else if (accessory == "halo-cyan") {
+            DrawCylinder({center.x, center.y + 1.36f, center.z}, 0.33f, 0.33f, 0.045f, 24, Color{114, 228, 239, 255});
+        }
+    }
 }
 
 struct DisconnectDialogLayout {
@@ -636,6 +656,7 @@ void GameClient::DrawFrame() {
     const Vector3 playerPosition = ToRaylibVector(player_->Position());
     std::string localDisplayName = session_.HasToken() ? session_.DisplayName() : "Guest";
     bool localVerified = networkClient_.UserVerified();
+    NetworkPlayerSnapshot localAppearance = networkClient_.LocalAvatar();
     std::vector<std::uint64_t> activeSessions;
     activeSessions.reserve(networkClient_.Players().size() + 1);
     if (networkClient_.SessionId() != 0) activeSessions.push_back(networkClient_.SessionId());
@@ -669,6 +690,7 @@ void GameClient::DrawFrame() {
             !remote.displayName.empty()) {
             localDisplayName = remote.displayName;
             localVerified = remote.isVerified;
+            localAppearance = remote;
             break;
         }
     }
@@ -733,18 +755,7 @@ void GameClient::DrawFrame() {
     }
 
     const Color characterTint = PlayerColorForSession(networkClient_.SessionId(), playerColorSlots_);
-    if (characterModelsReady_) {
-        DrawLitCharacter(&characterCylinderModel_, &characterSphereModel_, playerPosition,
-                         Player::kHalfHeightOfCylinder, characterTint);
-    } else {
-        const Vector3 capsuleBottom{ playerPosition.x,
-                                     playerPosition.y - Player::kHalfHeightOfCylinder,
-                                     playerPosition.z };
-        const Vector3 capsuleTop{ playerPosition.x,
-                                  playerPosition.y + Player::kHalfHeightOfCylinder,
-                                  playerPosition.z };
-        DrawCapsule(capsuleBottom, capsuleTop, Player::kRadius, 20, 12, characterTint);
-    }
+    DrawAvatar(playerPosition, localAppearance, characterTint);
 
     // Nameplates are textured billboards. Switch back to Raylib's default
     // texture shader after the lit world geometry so their glyph texture is sampled.
@@ -785,16 +796,7 @@ void GameClient::DrawFrame() {
 
         const Vector3 remotePosition{remote.x, remote.y, remote.z};
         const Color remoteTint = PlayerColorForSession(remote.sessionId, playerColorSlots_);
-        if (characterModelsReady_) {
-            DrawLitCharacter(&characterCylinderModel_, &characterSphereModel_, remotePosition,
-                             Player::kHalfHeightOfCylinder, remoteTint);
-        } else {
-            const Vector3 capsuleBottom{remote.x,
-                remote.y - Player::kHalfHeightOfCylinder, remote.z};
-            const Vector3 capsuleTop{remote.x,
-                remote.y + Player::kHalfHeightOfCylinder, remote.z};
-            DrawCapsule(capsuleBottom, capsuleTop, Player::kRadius, 20, 12, remoteTint);
-        }
+        DrawAvatar(remotePosition, remote, remoteTint);
 
         const Vector3 labelPosition{remote.x,
             remote.y + Player::kHalfHeightOfCylinder + Player::kRadius + 0.18f,

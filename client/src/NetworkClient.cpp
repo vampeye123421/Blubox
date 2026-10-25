@@ -14,6 +14,7 @@
 #define PlaySound Win32PlaySound
 #endif
 #include <enet/enet.h>
+#include <nlohmann/json.hpp>
 #if defined(_WIN32)
 #undef PlaySound
 #undef LoadImage
@@ -28,6 +29,7 @@
 #include <bit>
 #include <cmath>
 #include <chrono>
+#include <cctype>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -45,10 +47,44 @@ constexpr enet_uint8 kJoinHandshakeMessage = 0x01;
 constexpr enet_uint8 kClientPositionMessage = 0x02;
 constexpr enet_uint8 kJoinAcceptedMessage = 0x81;
 constexpr enet_uint8 kWorldSnapshotMessage = 0x82;
-constexpr enet_uint8 kProtocolVersion = 4;
+constexpr enet_uint8 kProtocolVersion = 5;
 constexpr std::size_t kMaxUserIdBytes = 256;
 constexpr std::size_t kMaxDisplayNameBytes = 64;
 constexpr std::size_t kMaxSnapshotPlayers = 128;
+constexpr std::size_t kMaxAvatarDescriptionBytes = 1024;
+
+bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
+    if (payload.empty() || payload.size() > kMaxAvatarDescriptionBytes) return false;
+    try {
+        const auto value = nlohmann::json::parse(payload);
+        if (!value.is_object() || value.value("version", 0) != 1) return false;
+        player.shirtId = value.value("shirtId", player.shirtId);
+        player.pantsId = value.value("pantsId", player.pantsId);
+        if (player.shirtId != "shirt-cyan-hoodie" && player.shirtId != "shirt-blue-jacket" &&
+            player.shirtId != "shirt-violet-tee" && player.shirtId != "shirt-white-tee") return false;
+        if (player.pantsId != "pants-dark-denim" && player.pantsId != "pants-slate" &&
+            player.pantsId != "pants-cyan") return false;
+        const auto readColor = [&](const char* key, std::string& output) {
+            const std::string color = value.value(key, output);
+            if (color.size() != 7 || color[0] != '#') return false;
+            for (std::size_t i = 1; i < color.size(); ++i)
+                if (!std::isxdigit(static_cast<unsigned char>(color[i]))) return false;
+            output = color;
+            return true;
+        };
+        if (!readColor("bodyColor", player.bodyColor) || !readColor("shirtColor", player.shirtColor) ||
+            !readColor("pantsColor", player.pantsColor)) return false;
+        const auto accessories = value.value("accessories", nlohmann::json::array());
+        if (!accessories.is_array() || accessories.size() > 3) return false;
+        for (const auto& item : accessories) {
+            if (!item.is_string()) return false;
+            const std::string id = item.get<std::string>();
+            if (id != "cap-blue" && id != "backpack-cyan" && id != "halo-cyan") return false;
+            player.accessories.push_back(id);
+        }
+        return true;
+    } catch (...) { return false; }
+}
 
 void AppendU16(std::vector<enet_uint8> &buffer, std::size_t value) {
     const auto value16 = static_cast<enet_uint16>(value);
@@ -208,13 +244,19 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
     }
 
     if (bytes[0] == kJoinAcceptedMessage) {
-        if (size < 12) return;
+        if (size < 15) return;
         sessionId_ = ReadU64(bytes + 2);
         const std::size_t idLength = ReadU16(bytes + 10);
-        if (sessionId_ == 0 || idLength == 0 || idLength > kMaxUserIdBytes || size != 13 + idLength ||
-            bytes[12] > 1) return;
+        const std::size_t avatarLength = ReadU16(bytes + 13);
+        if (sessionId_ == 0 || idLength == 0 || idLength > kMaxUserIdBytes ||
+            avatarLength == 0 || avatarLength > kMaxAvatarDescriptionBytes ||
+            size != 15 + idLength + avatarLength || bytes[12] > 1) return;
         userVerified_ = bytes[12] != 0;
-        userId_.assign(reinterpret_cast<const char *>(bytes + 13), idLength);
+        userId_.assign(reinterpret_cast<const char *>(bytes + 15), idLength);
+        localAvatar_ = {};
+        localAvatar_.userId = userId_;
+        localAvatar_.isVerified = userVerified_;
+        if (!ReadAvatar(std::string_view(reinterpret_cast<const char *>(bytes + 15 + idLength), avatarLength), localAvatar_)) return;
         authenticated_ = true;
         disconnectKind_ = DisconnectKind::None;
         if (session_ != nullptr) {
@@ -244,7 +286,7 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
         offset += 13;
         if (sessionId == 0 || idLength == 0 || idLength > kMaxUserIdBytes || nameLength == 0 ||
             nameLength > kMaxDisplayNameBytes || verifiedByte > 1 ||
-            size - offset < idLength + nameLength + 12) return;
+            size - offset < idLength + nameLength + 14) return;
 
         NetworkPlayerSnapshot player;
         player.sessionId = sessionId;
@@ -258,6 +300,12 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
         player.z = ReadFloat(bytes + offset + 8);
         offset += 12;
         if (!std::isfinite(player.x) || !std::isfinite(player.y) || !std::isfinite(player.z)) return;
+        const std::size_t avatarLength = ReadU16(bytes + offset);
+        offset += 2;
+        if (avatarLength == 0 || avatarLength > kMaxAvatarDescriptionBytes || size - offset < avatarLength ||
+            !ReadAvatar(std::string_view(reinterpret_cast<const char *>(bytes + offset), avatarLength), player)) return;
+        offset += avatarLength;
+        if (player.sessionId == sessionId_) localAvatar_ = player;
         nextPlayers.push_back(std::move(player));
     }
     if (offset != size) return;

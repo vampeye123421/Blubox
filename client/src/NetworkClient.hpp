@@ -18,6 +18,12 @@ struct NetworkPlayerSnapshot {
     std::string userId;
     std::string displayName;
     bool isVerified = false;
+    std::string bodyColor = "#dca77b";
+    std::string shirtId = "shirt-cyan-hoodie";
+    std::string shirtColor = "#22b8cf";
+    std::string pantsId = "pants-dark-denim";
+    std::string pantsColor = "#334b78";
+    std::vector<std::string> accessories;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
@@ -47,6 +53,7 @@ public:
 
     const std::vector<NetworkPlayerSnapshot> &Players() const noexcept { return players_; }
     const std::string &UserId() const noexcept { return userId_; }
+    const NetworkPlayerSnapshot &LocalAvatar() const noexcept { return localAvatar_; }
     std::uint64_t SessionId() const noexcept { return sessionId_; }
     bool UserVerified() const noexcept { return userVerified_; }
     DisconnectKind DisconnectReason() const noexcept { return disconnectKind_; }
@@ -65,6 +72,7 @@ private:
     bool userVerified_ = false;
     PresenceReporter presenceReporter_;
     std::vector<NetworkPlayerSnapshot> players_;
+    NetworkPlayerSnapshot localAvatar_{};
     double nextPositionSendTime_ = 0.0;
     bool authenticated_ = false;
     bool enetInitialized_ = false;
