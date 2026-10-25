@@ -213,9 +213,9 @@ bool DrawEditor(const PropertyDescriptor& descriptor, PropertyValue& value) {
     case PropertyType::Float: {
         double v = std::get<double>(value);
         if (descriptor.name == "Transparency" || descriptor.name == "BackgroundTransparency" || descriptor.name == "TextTransparency") {
-            float opacity = static_cast<float>(std::clamp(v, 0.0, 1.0));
-            changed = ImGui::SliderFloat("##value", &opacity, 0.0f, 1.0f, "%.0f%%");
-            if (changed) v = opacity;
+            float percentage = static_cast<float>(std::clamp(v, 0.0, 1.0) * 100.0);
+            changed = ImGui::SliderFloat("##value", &percentage, 0.0f, 100.0f, "%.0f%%");
+            if (changed) v = static_cast<double>(percentage) / 100.0;
         } else {
             changed = ImGui::InputDouble("##value", &v, 0.0, 0.0, "%.3f");
         }
