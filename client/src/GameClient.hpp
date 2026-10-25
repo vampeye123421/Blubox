@@ -54,5 +54,6 @@ private:
     float cameraPitch_ = 0.28f;
     float cameraDistance_ = 7.0f;
     bool mouseCaptured_ = true;
+    bool disconnectUiActive_ = false;
     bool running_ = true;
 };

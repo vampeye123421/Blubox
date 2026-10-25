@@ -567,6 +567,15 @@ int GameClient::Run() {
         Update(deltaSeconds);
         if (!networkClient_.HasDisconnectNotice()) localScriptRuntime_.Tick(deltaSeconds);
         networkClient_.Poll();
+        // The network notice can arrive after Update() has already run for this
+        // frame. Release capture immediately so the disconnect dialog is
+        // interactive on its very first rendered frame.
+        if (networkClient_.HasDisconnectNotice() && !disconnectUiActive_) {
+            mouseCaptured_ = false;
+            EnableCursor();
+            SetMouseCursor(MOUSE_CURSOR_DEFAULT);
+            disconnectUiActive_ = true;
+        }
         if (!networkClient_.HasDisconnectNotice()) physicsWorld_.Step(deltaSeconds);
         const JPH::Vec3 networkPosition = player_->Position();
         networkClient_.SendPlayerPosition(networkPosition.GetX(), networkPosition.GetY(),
@@ -600,15 +609,18 @@ int GameClient::Run() {
 
 void GameClient::Update(float deltaSeconds) {
     if (networkClient_.HasDisconnectNotice()) {
+        // Keep the actual Raylib/GLFW cursor mode in sync with the gameplay
+        // flag. A stale disabled-cursor mode reports the pointer at the center
+        // of the window and makes the Leave button impossible to hit.
         mouseCaptured_ = false;
-        EnableCursor();
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) ||
-            IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
-            const auto layout = GetDisconnectDialogLayout();
-            const Vector2 mouse = GetMousePosition();
-            if (CheckCollisionPointRec(mouse, layout.leave)) {
-                running_ = false;
-            }
+        if (IsCursorHidden()) EnableCursor();
+
+        const auto layout = GetDisconnectDialogLayout();
+        const Vector2 mouse = GetMousePosition();
+        const bool leaveHovered = CheckCollisionPointRec(mouse, layout.leave);
+        SetMouseCursor(leaveHovered ? MOUSE_CURSOR_POINTING_HAND : MOUSE_CURSOR_DEFAULT);
+        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && leaveHovered) {
+            running_ = false;
         }
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) running_ = false;
         return;
