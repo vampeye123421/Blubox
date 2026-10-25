@@ -45,6 +45,8 @@ if (-not $SkipBuild) {
         Invoke-Native $cmake @('-S', $ClientRoot, '-B', $ClientBuildDir, '-DCMAKE_BUILD_TYPE=Release')
     }
     Invoke-Native $cmake @('--build', $ClientBuildDir, '--config', 'Release', '--target', 'blubox_client')
+    Invoke-Native $cmake @('--build', $ClientBuildDir, '--config', 'Release', '--target', 'blubox_launcher')
+    Invoke-Native $cmake @('--build', $ClientBuildDir, '--config', 'Release', '--target', 'blubox_studio_launcher')
 
     if (-not (Test-Path -LiteralPath (Join-Path $StudioBuildDir 'CMakeCache.txt'))) {
         Invoke-Native $cmake @('-S', $StudioRoot, '-B', $StudioBuildDir, '-DCMAKE_BUILD_TYPE=Release')
@@ -69,6 +71,8 @@ foreach ($version in @($clientVersion, $studioVersion, $AppVersion)) {
 }
 
 $clientExe = Find-BuiltExecutable $ClientBuildDir 'blubox_client.exe'
+$clientLauncherExe = Find-BuiltExecutable $ClientBuildDir 'blubox_launcher.exe'
+$studioLauncherExe = Find-BuiltExecutable $ClientBuildDir 'blubox_studio_launcher.exe'
 $studioExe = Find-BuiltExecutable $StudioBuildDir 'blubox_studio.exe'
 $fontDir = Join-Path $StudioRoot 'assets\editor\fonts'
 $clientDependencyLicenses = @(
@@ -80,6 +84,8 @@ $clientDependencyLicenses = @(
 )
 $requiredFiles = @(
     $clientExe,
+    $clientLauncherExe,
+    $studioLauncherExe,
     $studioExe,
     (Join-Path $StudioRoot 'assets\editor\luau_api_catalog.json'),
     (Join-Path $fontDir 'InterVariable.ttf'),
@@ -110,6 +116,8 @@ New-Item -ItemType Directory -Path (Join-Path $staging 'licenses\client') -Force
 New-Item -ItemType Directory -Path $childInstallerDir -Force | Out-Null
 
 Copy-Item -LiteralPath $clientExe -Destination (Join-Path $staging 'BluboxClient.exe')
+Copy-Item -LiteralPath $clientLauncherExe -Destination (Join-Path $staging 'BluboxLauncher.exe')
+Copy-Item -LiteralPath $studioLauncherExe -Destination (Join-Path $staging 'BluboxStudioLauncher.exe')
 Copy-Item -LiteralPath $studioExe -Destination (Join-Path $staging 'BluboxStudio.exe')
 Copy-Item -LiteralPath (Join-Path $StudioRoot 'assets\editor\luau_api_catalog.json') -Destination (Join-Path $staging 'assets\editor\luau_api_catalog.json')
 Copy-Item -LiteralPath (Join-Path $fontDir 'InterVariable.ttf') -Destination (Join-Path $staging 'assets\editor\fonts\InterVariable.ttf')

@@ -33,6 +33,12 @@ jobs:
         shell: msys2 {0}
         run: cmake --build build --target blubox_client --parallel 1
 
+      - name: Build update launchers
+        shell: msys2 {0}
+        run: |
+          cmake --build build --target blubox_launcher --parallel 1
+          cmake --build build --target blubox_studio_launcher --parallel 1
+
       - name: Compute client checksum
         id: checksum
         shell: pwsh
@@ -41,6 +47,11 @@ jobs:
           if (-not (Test-Path $exe)) { throw "Client executable missing: $exe" }
           $sha = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "sha256=$sha" >> $env:GITHUB_OUTPUT
+          foreach ($item in @(@{Path='build/blubox_launcher.exe'; Name='launcher_sha256'}, @{Path='build/blubox_studio_launcher.exe'; Name='studio_launcher_sha256'})) {
+            if (-not (Test-Path $item.Path)) { throw "Updater executable missing: $($item.Path)" }
+            $hash = (Get-FileHash $item.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$($item.Name)=$hash" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Publish client runtime
         env:
@@ -49,7 +60,12 @@ jobs:
         run: |
           $version = '${{ github.ref_name }}'.Substring('client-v'.Length)
           Copy-Item 'build/blubox_client.exe' "$env:RUNNER_TEMP/BluboxClient.exe"
-          gh release create "runtime-v$version" "$env:RUNNER_TEMP/BluboxClient.exe" `
+          Copy-Item 'build/blubox_launcher.exe' "$env:RUNNER_TEMP/blubox_launcher.exe"
+          Copy-Item 'build/blubox_studio_launcher.exe' "$env:RUNNER_TEMP/blubox_studio_launcher.exe"
+          gh release create "runtime-v$version" `
+            "$env:RUNNER_TEMP/BluboxClient.exe" `
+            "$env:RUNNER_TEMP/blubox_launcher.exe" `
+            "$env:RUNNER_TEMP/blubox_studio_launcher.exe" `
             --repo '${{ github.repository }}' `
             --title "Blubox Client runtime v$version" `
             --notes 'Blubox Client executable downloaded by the launcher.' `
@@ -60,6 +76,8 @@ jobs:
         uses: actions/github-script@v8
         env:
           CLIENT_SHA256: ${{ steps.checksum.outputs.sha256 }}
+          CLIENT_LAUNCHER_SHA256: ${{ steps.checksum.outputs.launcher_sha256 }}
+          STUDIO_LAUNCHER_SHA256: ${{ steps.checksum.outputs.studio_launcher_sha256 }}
         with:
           script: |
             const version = context.ref.replace('refs/tags/client-v', '');
@@ -70,6 +88,12 @@ jobs:
             manifest.version = version;
             manifest.downloadUrl = `https://github.com/${owner}/${repo}/releases/download/runtime-v${version}/BluboxClient.exe`;
             manifest.sha256 = process.env.CLIENT_SHA256;
+            manifest.launcherVersion = version;
+            manifest.launcherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/runtime-v${version}/blubox_launcher.exe`;
+            manifest.launcherSha256 = process.env.CLIENT_LAUNCHER_SHA256;
+            manifest.studioLauncherVersion = version;
+            manifest.studioLauncherDownloadUrl = `https://github.com/${owner}/${repo}/releases/download/runtime-v${version}/blubox_studio_launcher.exe`;
+            manifest.studioLauncherSha256 = process.env.STUDIO_LAUNCHER_SHA256;
             await github.rest.repos.createOrUpdateFileContents({
               owner, repo, path, branch: 'main',
               message: `Publish Blubox Client manifest v${version}`,
