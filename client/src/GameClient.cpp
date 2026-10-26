@@ -44,17 +44,20 @@ constexpr const char *kLightingVertexShader = R"GLSL(
 #version 330
 in vec3 vertexPosition;
 in vec3 vertexNormal;
+in vec2 vertexTexCoord;
 in vec4 vertexColor;
 uniform mat4 mvp;
 uniform mat4 matModel;
 uniform mat4 matNormal;
 out vec3 fragNormal;
 out vec3 fragPosition;
+out vec2 fragTexCoord;
 out vec4 fragColor;
 uniform vec4 colDiffuse;
 void main() {
     fragNormal = normalize((matNormal * vec4(vertexNormal, 0.0)).xyz);
     fragPosition = (matModel * vec4(vertexPosition, 1.0)).xyz;
+    fragTexCoord = vertexTexCoord;
     fragColor = vertexColor * colDiffuse;
     gl_Position = mvp * vec4(vertexPosition, 1.0);
 }
@@ -64,10 +67,12 @@ constexpr const char *kLightingFragmentShader = R"GLSL(
 #version 330
 in vec3 fragNormal;
 in vec3 fragPosition;
+in vec2 fragTexCoord;
 in vec4 fragColor;
 uniform vec3 sunToLight;
 uniform vec3 viewPosition;
 uniform float ambientStrength;
+uniform sampler2D texture0;
 out vec4 finalColor;
 void main() {
     vec3 N = normalize(fragNormal);
@@ -80,8 +85,9 @@ void main() {
         ? pow(max(dot(N, H), 0.0), 48.0) * 0.10
         : 0.0;
     vec3 lighting = vec3(ambientStrength) + vec3(1.15 * diffuse);
-    vec3 litColor = fragColor.rgb * lighting + vec3(specular);
-    finalColor = vec4(litColor, fragColor.a);
+    vec4 texColor = texture(texture0, fragTexCoord) * fragColor;
+    vec3 litColor = texColor.rgb * lighting + vec3(specular);
+    finalColor = vec4(litColor, texColor.a);
 }
 )GLSL";
 
@@ -445,6 +451,7 @@ int GameClient::Run() {
         lightingShader_.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(lightingShader_, "matModel");
         lightingShader_.locs[SHADER_LOC_MATRIX_NORMAL] = GetShaderLocation(lightingShader_, "matNormal");
         lightingShader_.locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(lightingShader_, "colDiffuse");
+        lightingShader_.locs[SHADER_LOC_MAP_DIFFUSE] = GetShaderLocation(lightingShader_, "texture0");
         sunToLightLocation_ = GetShaderLocation(lightingShader_, "sunToLight");
         viewPositionLocation_ = GetShaderLocation(lightingShader_, "viewPosition");
         const int ambientLocation = GetShaderLocation(lightingShader_, "ambientStrength");
