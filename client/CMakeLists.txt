@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.2.7 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.2.24 LANGUAGES C CXX)
 if(WIN32)
     enable_language(RC)
 endif()
@@ -26,6 +26,8 @@ set(TARGET_VIEWER OFF CACHE BOOL "Build Jolt viewer" FORCE)
 set(TARGET_UNIT_TESTS OFF CACHE BOOL "Build Jolt unit tests" FORCE)
 set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "Build Jolt without link-time optimization" FORCE)
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "Use the standard dynamic MSVC runtime" FORCE)
+set(LUAU_BUILD_CLI OFF CACHE BOOL "Do not build Luau command line tools" FORCE)
+set(LUAU_BUILD_TESTS OFF CACHE BOOL "Do not build Luau tests" FORCE)
 
 FetchContent_Declare(
     raylib
@@ -54,16 +56,27 @@ FetchContent_Declare(
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
-FetchContent_MakeAvailable(raylib JoltPhysics enet nlohmann_json)
+FetchContent_Declare(
+    luau
+    GIT_REPOSITORY https://github.com/luau-lang/luau.git
+    GIT_TAG 0.743
+    GIT_SHALLOW TRUE
+)
 
-add_executable(blubox_client
+FetchContent_MakeAvailable(raylib JoltPhysics enet nlohmann_json luau)
+
+add_executable(blubox_client WIN32
     src/ClientMain.cpp
     src/ClientSession.cpp
     src/NetworkClient.cpp
+    src/PresenceReporter.cpp
     src/LaunchOptions.cpp
     src/ProtocolLaunchData.cpp
     src/PhysicsWorld.cpp
     src/Player.cpp
+    src/PublishedWorld.cpp
+    src/AvatarAssetCache.cpp
+    src/LocalScriptRuntime.cpp
     src/RaylibCompat.cpp
     src/GameClient.cpp
 )
@@ -102,12 +115,48 @@ add_custom_command(
 )
 target_sources(blubox_client PRIVATE "${BLUBOX_RUNTIME_ICON_HEADER}")
 
+set(BLUBOX_VERIFIED_BADGE_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxVerifiedBadge.hpp")
+add_custom_command(
+    OUTPUT "${BLUBOX_VERIFIED_BADGE_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/verified-badge.png"
+            "-DOUTPUT_FILE=${BLUBOX_VERIFIED_BADGE_HEADER}"
+            "-DSYMBOL_NAME=kVerifiedBadgeData"
+            "-DSIZE_SYMBOL_NAME=kVerifiedBadgeDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/verified-badge.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+target_sources(blubox_client PRIVATE "${BLUBOX_VERIFIED_BADGE_HEADER}")
+
+# The temporary Blubox R6 avatar ships inside the client executable, so avatar
+# rendering does not depend on a loose asset file or the launcher's working dir.
+set(BLUBOX_CHARACTER_MODEL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxR6Character.hpp")
+add_custom_command(
+    OUTPUT "${BLUBOX_CHARACTER_MODEL_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/avatars/BluboxR6_Studio.glb"
+            "-DOUTPUT_FILE=${BLUBOX_CHARACTER_MODEL_HEADER}"
+            "-DSYMBOL_NAME=kR6CharacterData"
+            "-DSIZE_SYMBOL_NAME=kR6CharacterDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/avatars/BluboxR6_Studio.glb"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+target_sources(blubox_client PRIVATE "${BLUBOX_CHARACTER_MODEL_HEADER}")
+
 target_include_directories(blubox_client PRIVATE
     src
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     ${enet_SOURCE_DIR}/include
 )
-target_link_libraries(blubox_client PRIVATE raylib Jolt enet nlohmann_json::nlohmann_json)
+target_link_libraries(blubox_client PRIVATE raylib Jolt enet nlohmann_json::nlohmann_json Luau.Compiler Luau.VM)
 
 if(MSVC)
     target_compile_options(blubox_client PRIVATE /W4 /permissive-)
@@ -124,7 +173,7 @@ endif()
 
 if(WIN32)
     target_compile_definitions(blubox_client PRIVATE _WIN32_WINNT=0x0600)
-    target_link_libraries(blubox_client PRIVATE winmm)
+    target_link_libraries(blubox_client PRIVATE winmm winhttp)
     target_sources(blubox_client PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxIcon.rc")
 endif()
 if(WIN32 AND MINGW)
@@ -165,7 +214,7 @@ add_custom_command(
     VERBATIM
 )
 
-add_executable(blubox_launcher
+add_executable(blubox_launcher WIN32
     src/LauncherMain.cpp
     src/Launcher.cpp
     src/LaunchOptions.cpp
@@ -193,7 +242,7 @@ if(WIN32 AND MINGW)
 endif()
 
 # Dedicated updater entry point for the Studio Start Menu shortcut.
-add_executable(blubox_studio_launcher
+add_executable(blubox_studio_launcher WIN32
     src/LauncherMain.cpp
     src/Launcher.cpp
     src/LaunchOptions.cpp

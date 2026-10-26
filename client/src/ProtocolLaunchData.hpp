@@ -11,6 +11,7 @@ struct ProtocolLaunchData {
     std::string action;
     std::string path;
     std::optional<std::string> sessionToken;
+    std::optional<std::string> presenceToken;
     std::optional<std::string> worldId;
     std::map<std::string, std::string> queryParameters;
 };

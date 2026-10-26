@@ -20,4 +20,4 @@ void GetFontDefaultSafe(Font *font);
 Vector2 MeasureTextExSafe(const Font *font, const char *text, float fontSize, float spacing);
 void DrawTextExSafe(const Font *font, const char *text, Vector2 position, float fontSize,
                     float spacing, Color tint);
-Texture2D CreateNameplateTextureSafe(const Font *font, const char *text);
+Texture2D CreateNameplateTextureSafe(const Font *font, const char *text, bool verified = false);

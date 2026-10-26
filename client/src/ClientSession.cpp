@@ -23,7 +23,8 @@ void SecureErase(std::vector<char> &value) noexcept {
 }
 
 bool IsTokenParameter(const std::string &key) {
-    return key == "token" || key == "session_token" || key == "sessiontoken";
+    return key == "token" || key == "session_token" || key == "sessiontoken" ||
+           key == "presencetoken" || key == "presence_token";
 }
 
 std::string DecodeBase64Url(std::string_view input) {
@@ -86,13 +87,23 @@ ClientSession::ClientSession(ProtocolLaunchData *launchData) {
         launchData->sessionToken.reset();
     }
 
+    if (launchData->presenceToken.has_value()) {
+        const std::string &source = *launchData->presenceToken;
+        if (source.size() == 64 && std::all_of(source.begin(), source.end(), [](unsigned char c) {
+                return std::isxdigit(c) != 0;
+            })) {
+            presenceToken_.assign(source.begin(), source.end());
+        }
+        SecureErase(*launchData->presenceToken);
+        launchData->presenceToken.reset();
+    }
+
     if (displayName_.empty()) displayName_ = "Player";
 
     if (launchData->worldId.has_value()) {
         worldId_ = std::move(*launchData->worldId);
         launchData->worldId.reset();
     }
-
     // The parsed URL and query map contain duplicate token copies. They are no
     // longer needed after extracting session state, so scrub the raw URI and
     // remove credential entries from the generic query map.
@@ -109,4 +120,5 @@ ClientSession::ClientSession(ProtocolLaunchData *launchData) {
 
 ClientSession::~ClientSession() {
     SecureErase(token_);
+    SecureErase(presenceToken_);
 }

@@ -23,9 +23,13 @@ public:
     bool HasWorldId() const noexcept { return !worldId_.empty(); }
     const std::string &WorldId() const noexcept { return worldId_; }
     const std::string &DisplayName() const noexcept { return displayName_; }
+    std::string_view PresenceToken() const noexcept {
+        return presenceToken_.empty() ? std::string_view{} : std::string_view(presenceToken_.data(), presenceToken_.size());
+    }
 
 private:
     std::vector<char> token_;
+    std::vector<char> presenceToken_;
     std::string worldId_;
     std::string displayName_;
 };

@@ -3,8 +3,12 @@
 #include <Jolt/Core/Factory.h>
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/EPhysicsUpdateError.h>
 
 #include <algorithm>
@@ -18,9 +22,9 @@ constexpr JPH::ObjectLayer kNonMovingLayer = 0;
 constexpr JPH::ObjectLayer kMovingLayer = 1;
 constexpr JPH::BroadPhaseLayer kNonMovingBroadPhaseLayer(0);
 constexpr JPH::BroadPhaseLayer kMovingBroadPhaseLayer(1);
-constexpr JPH::uint kMaxBodies = 1024;
-constexpr JPH::uint kMaxBodyPairs = 1024;
-constexpr JPH::uint kMaxContactConstraints = 1024;
+constexpr JPH::uint kMaxBodies = 16384;
+constexpr JPH::uint kMaxBodyPairs = 16384;
+constexpr JPH::uint kMaxContactConstraints = 16384;
 constexpr float kFixedTimeStep = 1.0f / 120.0f;
 constexpr int kMaxStepsPerFrame = 8;
 
@@ -138,6 +142,42 @@ JPH::Vec3 PhysicsWorld::GetPosition(JPH::BodyID bodyId) {
 
 JPH::Vec3 PhysicsWorld::GetLinearVelocity(JPH::BodyID bodyId) {
     return physicsSystem_->GetBodyInterface().GetLinearVelocity(bodyId);
+}
+
+bool PhysicsWorld::RaycastGround(JPH::BodyID bodyId, float capsuleHalfHeight,
+                                 float maxDrop, JPH::RVec3& point) const {
+    if (!physicsSystem_ || bodyId.IsInvalid() || !std::isfinite(capsuleHalfHeight) ||
+        !std::isfinite(maxDrop) || capsuleHalfHeight <= 0.0f || maxDrop <= 0.0f) return false;
+
+    const JPH::RVec3 center = physicsSystem_->GetBodyInterface().GetPosition(bodyId);
+    constexpr float kFootProbeLift = 0.06f;
+    const JPH::RVec3 origin(center.GetX(), center.GetY() - capsuleHalfHeight + kFootProbeLift,
+                            center.GetZ());
+    const JPH::RRayCast ray(origin, JPH::Vec3(0.0f, -maxDrop, 0.0f));
+    JPH::RayCastResult hit;
+    const JPH::IgnoreSingleBodyFilter ignorePlayer(bodyId);
+    const auto broadPhase = physicsSystem_->GetDefaultBroadPhaseLayerFilter(kMovingLayer);
+    const auto objectLayers = physicsSystem_->GetDefaultLayerFilter(kMovingLayer);
+    if (!physicsSystem_->GetNarrowPhaseQuery().CastRay(ray, hit, broadPhase, objectLayers,
+                                                       ignorePlayer)) return false;
+    point = ray.GetPointOnRay(hit.mFraction);
+    return true;
+}
+
+bool PhysicsWorld::RaycastGroundAt(const JPH::RVec3& feetPosition, float maxDrop,
+                                  JPH::RVec3& point) const {
+    if (!physicsSystem_ || !std::isfinite(maxDrop) || maxDrop <= 0.0f) return false;
+    constexpr float kFootProbeLift = 0.04f;
+    const JPH::RVec3 origin(feetPosition.GetX(), feetPosition.GetY() + kFootProbeLift,
+                            feetPosition.GetZ());
+    const JPH::RRayCast ray(origin, JPH::Vec3(0.0f, -(maxDrop + kFootProbeLift), 0.0f));
+    JPH::RayCastResult hit;
+    const auto broadPhase = physicsSystem_->GetDefaultBroadPhaseLayerFilter(kMovingLayer);
+    const auto objectLayers = physicsSystem_->GetDefaultLayerFilter(kMovingLayer);
+    if (!physicsSystem_->GetNarrowPhaseQuery().CastRay(ray, hit, broadPhase, objectLayers))
+        return false;
+    point = ray.GetPointOnRay(hit.mFraction);
+    return true;
 }
 
 void PhysicsWorld::SetLinearVelocity(JPH::BodyID bodyId, const JPH::Vec3 &velocity) {

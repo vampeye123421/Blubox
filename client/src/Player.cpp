@@ -15,8 +15,8 @@ constexpr float kGroundTolerance = 0.24f;
 
 } // namespace
 
-Player::Player(PhysicsWorld &physicsWorld) : physicsWorld_(physicsWorld) {
-    bodyId_ = physicsWorld_.CreateDynamicCapsule(JPH::RVec3(0.0, 3.0, 0.0),
+Player::Player(PhysicsWorld &physicsWorld, const JPH::RVec3 &spawnPosition) : physicsWorld_(physicsWorld) {
+    bodyId_ = physicsWorld_.CreateDynamicCapsule(spawnPosition,
                                                   kHalfHeightOfCylinder, kRadius, 75.0f);
 }
 
@@ -50,13 +50,15 @@ void Player::Update(float deltaSeconds, float cameraYaw) {
     if (IsKeyPressed(KEY_SPACE)) jumpBufferSeconds_ = kJumpBufferDuration;
     else jumpBufferSeconds_ = std::max(0.0f, jumpBufferSeconds_ - deltaSeconds);
 
-    // The floor's top is y=0, so the capsule center rests near its total half-height.
-    // Give Jolt's contact solver a little room for settling and small floor contacts.
-    const JPH::Vec3 currentPosition = physicsWorld_.GetPosition(bodyId_);
     const float capsuleHalfHeight = kHalfHeightOfCylinder + kRadius;
     float velocityY = currentVelocity.GetY();
+    JPH::RVec3 groundPoint;
+    // Studio maps can place their baseplate and SpawnLocation at any height.
+    // Test the actual collision world below the capsule instead of assuming
+    // every game has a floor at world Y=0.
     const bool grounded = velocityY <= 1.0f &&
-        currentPosition.GetY() <= capsuleHalfHeight + kGroundTolerance;
+        physicsWorld_.RaycastGround(bodyId_, capsuleHalfHeight,
+                                    kGroundTolerance + 0.10f, groundPoint);
     if (grounded) coyoteSeconds_ = kCoyoteDuration;
     else coyoteSeconds_ = std::max(0.0f, coyoteSeconds_ - deltaSeconds);
 

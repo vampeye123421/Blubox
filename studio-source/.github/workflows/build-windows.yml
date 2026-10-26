@@ -1,0 +1,55 @@
+name: Build Blubox Studio
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-ccache
+
+      - name: Set compiler cache location
+        shell: pwsh
+        run: |
+          "CCACHE_DIR=$env:RUNNER_TEMP\blubox-studio-ccache" >> $env:GITHUB_ENV
+          "CCACHE_MAXSIZE=3G" >> $env:GITHUB_ENV
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/blubox-studio-ccache
+          key: ${{ runner.os }}-ucrt64-studio-ccache-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-ucrt64-studio-ccache-${{ github.ref_name }}-
+            ${{ runner.os }}-ucrt64-studio-ccache-main-
+            ${{ runner.os }}-ucrt64-studio-ccache-
+
+      - name: Configure C++20 Studio
+        shell: msys2 {0}
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build Studio
+        shell: msys2 {0}
+        run: cmake --build build --config Release --parallel 2
+
+      - name: Show compiler cache statistics
+        if: always()
+        shell: msys2 {0}
+        run: ccache --show-stats
