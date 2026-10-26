@@ -411,6 +411,12 @@ void AvatarAssetCache::Draw(const NetworkPlayerSnapshot& avatar, bool drawClothi
         DrawOverlay(pantsTexture, Rectangle{231, 256, 58, 128}, -0.23f, 0.43f, 0.31f, 0.72f, 0.171f, ParseColor(avatar.pantsColor));
         DrawOverlay(pantsTexture, Rectangle{347, 256, 58, 128}, 0.23f, 0.43f, 0.31f, 0.72f, 0.171f, ParseColor(avatar.pantsColor));
     }
+    if (!avatar.faceAssetUrl.empty()) {
+        const Texture2D faceTexture = itemTexture(avatar.faceAssetUrl).texture;
+        if (faceTexture.id) {
+            DrawOverlay(faceTexture, Rectangle{0, 0, static_cast<float>(faceTexture.width), static_cast<float>(faceTexture.height)}, 0.0f, 1.93f, 0.35f, 0.35f, 0.325f, WHITE);
+        }
+    }
     for (const auto& accessory : avatar.accessoryAssets) {
         ModelEntry& entry = model(accessory.assetUrl, accessory.textureAssetUrl);
         Model& asset = entry.model;

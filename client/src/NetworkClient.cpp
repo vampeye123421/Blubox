@@ -61,10 +61,8 @@ bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
         if (!value.is_object() || value.value("version", 0) != 1) return false;
         player.shirtId = value.value("shirtId", player.shirtId);
         player.pantsId = value.value("pantsId", player.pantsId);
-        if (player.shirtId != "shirt-cyan-hoodie" && player.shirtId != "shirt-blue-jacket" &&
-            player.shirtId != "shirt-violet-tee" && player.shirtId != "shirt-white-tee") return false;
-        if (player.pantsId != "pants-dark-denim" && player.pantsId != "pants-slate" &&
-            player.pantsId != "pants-cyan") return false;
+        if (player.shirtId.empty() || player.shirtId.size() > 64 ||
+            player.pantsId.empty() || player.pantsId.size() > 64) return false;
         const auto readColor = [&](const char* key, std::string& output) {
             const std::string color = value.value(key, output);
             if (color.size() != 7 || color[0] != '#') return false;
@@ -88,7 +86,8 @@ bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
             return true;
         };
         if (!readAssetUrl("shirtAssetUrl", player.shirtAssetUrl) ||
-            !readAssetUrl("pantsAssetUrl", player.pantsAssetUrl)) return false;
+            !readAssetUrl("pantsAssetUrl", player.pantsAssetUrl) ||
+            !readAssetUrl("faceAssetUrl", player.faceAssetUrl)) return false;
         const auto accessories = value.value("accessories", nlohmann::json::array());
         if (!accessories.is_array() || accessories.size() > 32) return false;
         for (const auto& item : accessories) {

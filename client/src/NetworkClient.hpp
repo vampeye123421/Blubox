@@ -38,6 +38,7 @@ struct NetworkPlayerSnapshot {
     std::string pantsColor = "#334b78";
     std::string shirtAssetUrl;
     std::string pantsAssetUrl;
+    std::string faceAssetUrl;
     std::vector<std::string> accessories;
     std::vector<AccessoryAsset> accessoryAssets;
     float x = 0.0f;
