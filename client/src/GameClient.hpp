@@ -51,6 +51,7 @@ private:
     bool characterModelsReady_ = false;
     bool skyboxReady_ = false;
     float cameraYaw_ = 0.0f;
+    float playerFacingYaw_ = 0.0f;
     float cameraPitch_ = 0.28f;
     float cameraDistance_ = 7.0f;
     bool mouseCaptured_ = true;

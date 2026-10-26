@@ -696,6 +696,21 @@ void GameClient::Update(float deltaSeconds) {
                                   kMinimumCameraPitch, kMaximumCameraPitch);
     }
 
+    float forwardInput = 0.0f;
+    float rightInput = 0.0f;
+    if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) forwardInput += 1.0f;
+    if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) forwardInput -= 1.0f;
+    if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) rightInput += 1.0f;
+    if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) rightInput -= 1.0f;
+    const float inputLength = std::sqrt(forwardInput * forwardInput + rightInput * rightInput);
+
+    if (shiftLockEnabled_) {
+        playerFacingYaw_ = cameraYaw_;
+    } else if (inputLength > 0.01f) {
+        const float moveAngle = std::atan2(rightInput, forwardInput);
+        playerFacingYaw_ = cameraYaw_ + moveAngle;
+    }
+
     player_->Update(deltaSeconds, cameraYaw_);
 }
 
@@ -818,7 +833,7 @@ void GameClient::DrawFrame() {
 
     const Color characterTint = PlayerColorForSession(networkClient_.SessionId(), playerColorSlots_);
     DrawAvatar(playerPosition, localAppearance, characterTint, avatarAssets_,
-               characterModelsReady_ ? &characterSphereModel_ : nullptr, cameraYaw_);
+               characterModelsReady_ ? &characterSphereModel_ : nullptr, playerFacingYaw_);
 
     // Nameplates are textured billboards. Switch back to Raylib's default
     // texture shader after the lit world geometry so their glyph texture is sampled.
@@ -833,7 +848,7 @@ void GameClient::DrawFrame() {
         avatarAssets_.DrawGroundShadow(
             Vector3{static_cast<float>(shadowGround.GetX()), static_cast<float>(shadowGround.GetY()),
                     static_cast<float>(shadowGround.GetZ())},
-            localFeet, localAppearance, cameraYaw_, NormalizeVector(kSunToLight));
+            localFeet, localAppearance, playerFacingYaw_, NormalizeVector(kSunToLight));
     }
 
     // The rendered head's top is at playerY + 1.29. Keep the billboard's
