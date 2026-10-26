@@ -644,7 +644,21 @@ void GameClient::Update(float deltaSeconds) {
         return;
     }
 
+    if (IsKeyPressed(KEY_LEFT_SHIFT) || IsKeyPressed(KEY_RIGHT_SHIFT)) {
+        shiftLockEnabled_ = !shiftLockEnabled_;
+        if (shiftLockEnabled_) {
+            mouseCaptured_ = true;
+            DisableCursor();
+        } else {
+            mouseCaptured_ = false;
+            EnableCursor();
+        }
+    }
+
     if (IsKeyPressed(KEY_ESCAPE)) {
+        if (shiftLockEnabled_) {
+            shiftLockEnabled_ = false;
+        }
         if (mouseCaptured_) {
             mouseCaptured_ = false;
             EnableCursor();
@@ -657,7 +671,7 @@ void GameClient::Update(float deltaSeconds) {
         mouseCaptured_ = !mouseCaptured_;
         if (mouseCaptured_) DisableCursor();
         else EnableCursor();
-    } else if (!mouseCaptured_) {
+    } else if (!shiftLockEnabled_) {
         std::string activatedId;
         const bool uiConsumed = publishedWorld_.HandleGuiPointer(
             GetMousePosition(), IsMouseButtonPressed(MOUSE_BUTTON_LEFT),
@@ -666,10 +680,16 @@ void GameClient::Update(float deltaSeconds) {
         if (!uiConsumed && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             mouseCaptured_ = true;
             DisableCursor();
+        } else if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+            mouseCaptured_ = true;
+            DisableCursor();
+        } else if (IsMouseButtonReleased(MOUSE_BUTTON_RIGHT)) {
+            mouseCaptured_ = false;
+            EnableCursor();
         }
     }
 
-    if (mouseCaptured_) {
+    if (shiftLockEnabled_ || mouseCaptured_) {
         const Vector2 mouseDelta = GetMouseDelta();
         cameraYaw_ += mouseDelta.x * kMouseSensitivity;
         cameraPitch_ = std::clamp(cameraPitch_ + mouseDelta.y * kMouseSensitivity,
