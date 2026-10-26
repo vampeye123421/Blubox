@@ -45,25 +45,13 @@ LaunchOptions ParseLaunchOptions(int argc, char *argv[]) {
         } else if (argument == "--mode=guest") {
             options.mode = "guest";
         } else if (argument == "--mode") {
-            if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--")) {
+            if (i + 1 >= argc || std::string_view(argv[i + 1]).rfind("--", 0) == 0) {
                 throw std::invalid_argument("--mode requires a value (for example: --mode guest).");
             }
             options.mode = argv[++i];
             if (options.mode != "guest") {
                 throw std::invalid_argument("Unsupported mode: " + options.mode + ". Guest is the only mode currently available.");
             }
-        } else if (argument == "--studio-playtest") {
-            if (i + 5 >= argc) throw std::invalid_argument("--studio-playtest requires host, port, credential, map file, and display name.");
-            options.studioPlaytest = true;
-            options.studioHost = argv[++i];
-            const std::string_view portText(argv[++i]); unsigned port = 0;
-            const auto parsed = std::from_chars(portText.data(), portText.data()+portText.size(), port);
-            if (parsed.ec != std::errc{} || parsed.ptr != portText.data()+portText.size() || port == 0 || port > 65535)
-                throw std::invalid_argument("Studio playtest port is invalid.");
-            options.studioPort = static_cast<std::uint16_t>(port);
-            options.studioCredential = argv[++i]; options.studioMapFile = argv[++i]; options.studioDisplayName = argv[++i];
-            if (options.studioHost != "127.0.0.1" || options.studioCredential.size() != 64 || options.studioMapFile.empty())
-                throw std::invalid_argument("Studio playtest arguments are invalid.");
         } else if (HasBluboxScheme(argument)) {
             if (options.protocolLaunch.has_value()) {
                 throw std::invalid_argument("Only one blubox:// URL can be provided.");
@@ -77,8 +65,6 @@ LaunchOptions ParseLaunchOptions(int argc, char *argv[]) {
     if (options.registerProtocol && options.unregisterProtocol) {
         throw std::invalid_argument("Choose either --register-protocol or --unregister-protocol.");
     }
-    if (options.studioPlaytest && (options.protocolLaunch || options.uninstallClient || options.uninstallStudio))
-        throw std::invalid_argument("Studio playtest cannot be combined with other launch actions.");
     if ((options.uninstallClient && options.uninstallStudio) ||
         ((options.uninstallClient || options.uninstallStudio) &&
          (options.registerProtocol || options.unregisterProtocol || options.protocolLaunch.has_value()))) {

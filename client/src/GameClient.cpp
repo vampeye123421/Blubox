@@ -410,21 +410,15 @@ int GameClient::Run() {
         UnloadImage(appIcon);
     }
 
-    if (options_.studioPlaytest) {
-        if (!networkClient_.ConnectStudioLocal(options_.studioHost, options_.studioPort,
-                                                options_.studioCredential, options_.studioDisplayName))
-            TraceLog(LOG_ERROR, "Could not connect to the local Studio playtest server.");
-    } else if (options_.protocolLaunch.has_value() && options_.protocolLaunch->action == "join") {
+    if (options_.protocolLaunch.has_value() && options_.protocolLaunch->action == "join") {
+        networkClient_.Connect(session_);
+    } else {
+        // Always attempt connection to main multiplayer server
         networkClient_.Connect(session_);
     }
 
     bool publishedWorldLoaded = false;
-    if (options_.studioPlaytest) {
-        std::string worldError;
-        publishedWorldLoaded = publishedWorld_.LoadLocalMapFile(options_.studioMapFile, worldError);
-        if (publishedWorldLoaded) TraceLog(LOG_INFO, "Loaded Studio playtest map (%d parts).", static_cast<int>(publishedWorld_.Parts().size()));
-        else TraceLog(LOG_ERROR, "Studio playtest map unavailable: %s", worldError.c_str());
-    } else if (session_.HasWorldId()) {
+    if (session_.HasWorldId()) {
         std::string worldError;
         publishedWorldLoaded = publishedWorld_.Load(session_.WorldId(), worldError);
         if (publishedWorldLoaded) {
@@ -580,10 +574,6 @@ int GameClient::Run() {
         Update(deltaSeconds);
         if (!networkClient_.HasDisconnectNotice()) localScriptRuntime_.Tick(deltaSeconds);
         networkClient_.Poll();
-        if (options_.studioPlaytest) {
-            for (const auto& delta : networkClient_.TakeStudioPropertyDeltas())
-                (void)publishedWorld_.ApplyStudioPropertyDelta(delta);
-        }
         // The network notice can arrive after Update() has already run for this
         // frame. Release capture immediately so the disconnect dialog is
         // interactive on its very first rendered frame.
@@ -597,14 +587,6 @@ int GameClient::Run() {
         const JPH::Vec3 networkPosition = player_->Position();
         networkClient_.SendPlayerPosition(networkPosition.GetX(), networkPosition.GetY(),
                                           networkPosition.GetZ(), playerFacingYaw_);
-        if (options_.studioPlaytest) {
-            const float forward = (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP) ? 1.0f : 0.0f) -
-                                  (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN) ? 1.0f : 0.0f);
-            const float right = (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT) ? 1.0f : 0.0f) -
-                                (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT) ? 1.0f : 0.0f);
-            networkClient_.SendStudioInput(cameraYaw_, cameraPitch_, forward, right,
-                                            IsKeyDown(KEY_SPACE), IsKeyDown(KEY_LEFT_SHIFT));
-        }
         UpdateCamera();
         DrawFrame();
     }
@@ -737,8 +719,7 @@ void GameClient::UpdateCamera() {
 
 void GameClient::DrawFrame() {
     const Vector3 playerPosition = ToRaylibVector(player_->Position());
-    std::string localDisplayName = options_.studioPlaytest ? options_.studioDisplayName :
-        session_.HasToken() ? session_.DisplayName() : "Guest";
+    std::string localDisplayName = session_.HasToken() ? session_.DisplayName() : "Guest";
     bool localVerified = networkClient_.UserVerified();
     NetworkPlayerSnapshot localAppearance = networkClient_.LocalAvatar();
     std::vector<std::uint64_t> activeSessions;

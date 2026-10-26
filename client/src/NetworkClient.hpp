@@ -66,13 +66,9 @@ public:
 
     // Starts an asynchronous connection when session credentials are present.
     bool Connect(const ClientSession &session);
-    bool ConnectStudioLocal(std::string_view host, std::uint16_t port, std::string credential,
-                            std::string displayName);
     // Poll with timeout zero so the game loop never waits on the network.
     void Poll();
     void SendPlayerPosition(float x, float y, float z, float yaw);
-    void SendStudioInput(float yaw, float pitch, float forward, float right, bool jump, bool sprint);
-    std::vector<std::vector<unsigned char>> TakeStudioPropertyDeltas();
 
     const std::vector<NetworkPlayerSnapshot> &Players() const noexcept { return players_; }
     const std::string &UserId() const noexcept { return userId_; }
@@ -84,9 +80,6 @@ public:
 
 private:
     bool SendJoinHandshake();
-    bool SendStudioHello();
-    bool SendStudioPacket(std::uint8_t type, std::uint8_t channel, std::span<const unsigned char> payload, bool reliable);
-    void HandleStudioPacket(const unsigned char *data, std::size_t size);
     void HandlePacket(const unsigned char *data, std::size_t size);
     void Shutdown() noexcept;
 
@@ -102,12 +95,5 @@ private:
     double nextPositionSendTime_ = 0.0;
     bool authenticated_ = false;
     bool enetInitialized_ = false;
-    bool studioLocal_ = false;
-    std::string studioCredential_;
-    std::string studioDisplayName_;
-    std::vector<std::vector<unsigned char>> studioPropertyDeltas_;
-    std::uint64_t studioSessionToken_ = 0;
-    std::uint32_t studioSequence_ = 1;
-    std::uint32_t studioInputTick_ = 1;
     DisconnectKind disconnectKind_ = DisconnectKind::None;
 };
