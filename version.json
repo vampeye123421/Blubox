@@ -1,20 +1,20 @@
 {
   "version": "0.2.29",
   "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.29/BluboxClient.exe",
-  "sha256": "a30622b0cac1364f32e157628735a551e2a7662e863fee117925da9ba13d2d76",
-  "studioVersion": "0.1.15",
+  "sha256": "72913252ad772b8fdbb0f6dec79332df51fcaa61fe0f457164aab76087ce7c35",
+  "studioVersion": "0.1.13",
   "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.29/BluboxStudio.exe",
-  "studioSha256": "9e6bc459a41d33d01c5e3a00d05f5f19e459321cab734d93dd5354757ad46b64",
+  "studioSha256": "e0aac0dffa9c4675c1f1aa63635cae5733d36101ab5b9d60ab85342906dbd4b3",
   "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.29/InterVariable.ttf",
   "studioFontSha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf",
   "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.29/JetBrainsMonoRegular.ttf",
   "studioCodeFontSha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
   "launcherVersion": "0.2.29",
   "launcherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.29/BluboxLauncher.exe",
-  "launcherSha256": "68ce44a505f68e84ee96c60f6d9724b50341e6a792010bd388e02dafb699ee4c",
+  "launcherSha256": "d4a2d67fcad3fb4b4005671d39e6327392626147790b47f1aa8a190c711b744e",
   "studioLauncherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.29/BluboxStudioLauncher.exe",
-  "studioLauncherSha256": "e840b84c5c13a02e0e9a857743a1469ab9128c786e30410a741e5d30ca5d98d5",
+  "studioLauncherSha256": "77fe0e038e19f2e2c7f6784d91c87f06aa2c362333aa2653b4b669dc3bea90cf",
   "studioLauncherVersion": "0.2.29",
   "setupDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.29/Blubox-Setup.exe",
-  "setupSha256": "edf05dfaeb3ce08b7ec25cf9cb8004d20372e7a5eb4f8e679487347f8d4b9959"
+  "setupSha256": "c6b3e1044febd9daaaad8b41b81a94e4698ccb4495277fdc4ab70bee8346bd79"
 }
