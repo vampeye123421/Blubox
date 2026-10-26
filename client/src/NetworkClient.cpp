@@ -61,6 +61,7 @@ bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
         if (!value.is_object() || value.value("version", 0) != 1) return false;
         player.shirtId = value.value("shirtId", player.shirtId);
         player.pantsId = value.value("pantsId", player.pantsId);
+        player.faceId = value.value("faceId", player.faceId);
         if (player.shirtId.empty() || player.shirtId.size() > 64 ||
             player.pantsId.empty() || player.pantsId.size() > 64) return false;
         const auto readColor = [&](const char* key, std::string& output) {
@@ -428,8 +429,9 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
         player.x = ReadFloat(bytes + offset);
         player.y = ReadFloat(bytes + offset + 4);
         player.z = ReadFloat(bytes + offset + 8);
-        offset += 12;
-        if (!std::isfinite(player.x) || !std::isfinite(player.y) || !std::isfinite(player.z)) return;
+        player.yaw = ReadFloat(bytes + offset + 12);
+        offset += 16;
+        if (!std::isfinite(player.x) || !std::isfinite(player.y) || !std::isfinite(player.z) || !std::isfinite(player.yaw)) return;
         const std::size_t avatarLength = ReadU16(bytes + offset);
         offset += 2;
         if (avatarLength == 0 || avatarLength > kMaxAvatarDescriptionBytes || size - offset < avatarLength ||
@@ -442,10 +444,10 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
     players_ = std::move(nextPlayers);
 }
 
-void NetworkClient::SendPlayerPosition(float x, float y, float z) {
+void NetworkClient::SendPlayerPosition(float x, float y, float z, float yaw) {
     if (studioLocal_) return;
     if (peer_ == nullptr || host_ == nullptr || !authenticated_ ||
-        !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return;
+        !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(yaw)) return;
     const double now = GetTime();
     if (now < nextPositionSendTime_) return;
     nextPositionSendTime_ = now + 0.05; // 20 Hz client input; server snapshots remain 60 Hz.
@@ -454,6 +456,7 @@ void NetworkClient::SendPlayerPosition(float x, float y, float z) {
     AppendFloat(payload, x);
     AppendFloat(payload, y);
     AppendFloat(payload, z);
+    AppendFloat(payload, yaw);
     ENetPacket *packet = enet_packet_create(payload.data(), payload.size(), 0);
     if (packet == nullptr || enet_peer_send(peer_, 0, packet) != 0) {
         if (packet != nullptr) enet_packet_destroy(packet);

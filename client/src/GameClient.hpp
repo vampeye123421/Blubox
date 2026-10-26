@@ -44,6 +44,14 @@ private:
     Font uiFont_{};
     std::unordered_map<std::string, Texture2D> nameplateTextures_;
     std::unordered_map<std::uint64_t, std::size_t> playerColorSlots_;
+    struct SmoothedPlayer {
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        float yaw = 0.0f;
+        bool initialized = false;
+    };
+    std::unordered_map<std::uint64_t, SmoothedPlayer> smoothedPlayers_;
     int sunToLightLocation_ = -1;
     int viewPositionLocation_ = -1;
     int skyboxEnvironmentLocation_ = -1;

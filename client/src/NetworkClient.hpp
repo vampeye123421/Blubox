@@ -38,12 +38,14 @@ struct NetworkPlayerSnapshot {
     std::string pantsColor = "#334b78";
     std::string shirtAssetUrl;
     std::string pantsAssetUrl;
+    std::string faceId = "face-default";
     std::string faceAssetUrl;
     std::vector<std::string> accessories;
     std::vector<AccessoryAsset> accessoryAssets;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
+    float yaw = 0.0f;
 };
 
 enum class DisconnectKind {
@@ -68,7 +70,7 @@ public:
                             std::string displayName);
     // Poll with timeout zero so the game loop never waits on the network.
     void Poll();
-    void SendPlayerPosition(float x, float y, float z);
+    void SendPlayerPosition(float x, float y, float z, float yaw);
     void SendStudioInput(float yaw, float pitch, float forward, float right, bool jump, bool sprint);
     std::vector<std::vector<unsigned char>> TakeStudioPropertyDeltas();
 

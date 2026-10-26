@@ -596,7 +596,7 @@ int GameClient::Run() {
         if (!networkClient_.HasDisconnectNotice()) physicsWorld_.Step(deltaSeconds);
         const JPH::Vec3 networkPosition = player_->Position();
         networkClient_.SendPlayerPosition(networkPosition.GetX(), networkPosition.GetY(),
-                                          networkPosition.GetZ());
+                                          networkPosition.GetZ(), playerFacingYaw_);
         if (options_.studioPlaytest) {
             const float forward = (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP) ? 1.0f : 0.0f) -
                                   (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN) ? 1.0f : 0.0f);
@@ -753,6 +753,12 @@ void GameClient::DrawFrame() {
     for (auto it = playerColorSlots_.begin(); it != playerColorSlots_.end();) {
         if (!std::binary_search(activeSessions.begin(), activeSessions.end(), it->first))
             it = playerColorSlots_.erase(it);
+        else
+            ++it;
+    }
+    for (auto it = smoothedPlayers_.begin(); it != smoothedPlayers_.end();) {
+        if (!std::binary_search(activeSessions.begin(), activeSessions.end(), it->first))
+            it = smoothedPlayers_.erase(it);
         else
             ++it;
     }
