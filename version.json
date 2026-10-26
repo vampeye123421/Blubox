@@ -1,20 +1,20 @@
 {
   "version": "0.2.27",
   "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.27/BluboxClient.exe",
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sha256": "a30622b0cac1364f32e157628735a551e2a7662e863fee117925da9ba13d2d76",
   "studioVersion": "0.1.13",
   "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.27/BluboxStudio.exe",
-  "studioSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "studioSha256": "9e6bc459a41d33d01c5e3a00d05f5f19e459321cab734d93dd5354757ad46b64",
   "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.27/InterVariable.ttf",
-  "studioFontSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "studioFontSha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf",
   "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.27/JetBrainsMonoRegular.ttf",
-  "studioCodeFontSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "studioCodeFontSha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
   "launcherVersion": "0.2.27",
   "launcherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.27/BluboxLauncher.exe",
-  "launcherSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "launcherSha256": "68ce44a505f68e84ee96c60f6d9724b50341e6a792010bd388e02dafb699ee4c",
   "studioLauncherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.27/BluboxStudioLauncher.exe",
-  "studioLauncherSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "studioLauncherSha256": "e840b84c5c13a02e0e9a857743a1469ab9128c786e30410a741e5d30ca5d98d5",
   "studioLauncherVersion": "0.2.27",
   "setupDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.27/Blubox-Setup.exe",
-  "setupSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  "setupSha256": "edf05dfaeb3ce08b7ec25cf9cb8004d20372e7a5eb4f8e679487347f8d4b9959"
 }
