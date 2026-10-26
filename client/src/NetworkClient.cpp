@@ -253,6 +253,7 @@ void NetworkClient::Poll() {
     while ((result = enet_host_service(host_, &event, 0)) > 0) {
         switch (event.type) {
         case ENET_EVENT_TYPE_CONNECT:
+            enet_peer_timeout(event.peer, 32, 15000, 60000);
             TraceLog(LOG_INFO, "ENet connection established; sending join handshake.");
             if (!SendJoinHandshake()) {
                 TraceLog(LOG_ERROR, "Could not send the ENet handshake.");

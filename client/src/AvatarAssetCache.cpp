@@ -192,10 +192,10 @@ void DrawOverlay(Texture2D texture, Rectangle crop, float centerX, float centerY
     rlBegin(RL_QUADS);
     rlColor4ub(tint.r, tint.g, tint.b, tint.a);
     rlNormal3f(0.0f, 0.0f, 1.0f);
-    rlTexCoord2f(u0, v0); rlVertex3f(centerX - width * .5f, centerY + height * .5f, frontZ);
-    rlTexCoord2f(u1, v0); rlVertex3f(centerX + width * .5f, centerY + height * .5f, frontZ);
-    rlTexCoord2f(u1, v1); rlVertex3f(centerX + width * .5f, centerY - height * .5f, frontZ);
     rlTexCoord2f(u0, v1); rlVertex3f(centerX - width * .5f, centerY - height * .5f, frontZ);
+    rlTexCoord2f(u1, v1); rlVertex3f(centerX + width * .5f, centerY - height * .5f, frontZ);
+    rlTexCoord2f(u1, v0); rlVertex3f(centerX + width * .5f, centerY + height * .5f, frontZ);
+    rlTexCoord2f(u0, v0); rlVertex3f(centerX - width * .5f, centerY + height * .5f, frontZ);
     rlEnd();
     rlSetTexture(0);
 }
@@ -402,20 +402,28 @@ AvatarAssetCache::ModelEntry& AvatarAssetCache::model(const std::string& url, co
 }
 
 void AvatarAssetCache::Draw(const NetworkPlayerSnapshot& avatar, bool drawClothingOverlays) {
+    Texture2D shirtTexture{};
+    Texture2D pantsTexture{};
+    Texture2D faceTexture{};
     if (drawClothingOverlays && !avatar.shirtAssetUrl.empty()) {
-        const Texture2D shirtTexture = texture(avatar.shirtAssetUrl).texture;
-        DrawOverlay(shirtTexture, Rectangle{231, 128, 116, 128}, 0.0f, 1.25f, 0.76f, 0.88f, 0.214f, ParseColor(avatar.shirtColor));
+        shirtTexture = texture(avatar.shirtAssetUrl).texture;
     }
     if (drawClothingOverlays && !avatar.pantsAssetUrl.empty()) {
-        const Texture2D pantsTexture = texture(avatar.pantsAssetUrl).texture;
+        pantsTexture = texture(avatar.pantsAssetUrl).texture;
+    }
+    if (!avatar.faceAssetUrl.empty()) {
+        faceTexture = itemTexture(avatar.faceAssetUrl).texture;
+    }
+
+    if (shirtTexture.id != 0) {
+        DrawOverlay(shirtTexture, Rectangle{231, 128, 116, 128}, 0.0f, 1.25f, 0.76f, 0.88f, 0.214f, ParseColor(avatar.shirtColor));
+    }
+    if (pantsTexture.id != 0) {
         DrawOverlay(pantsTexture, Rectangle{231, 256, 58, 128}, -0.23f, 0.43f, 0.31f, 0.72f, 0.171f, ParseColor(avatar.pantsColor));
         DrawOverlay(pantsTexture, Rectangle{347, 256, 58, 128}, 0.23f, 0.43f, 0.31f, 0.72f, 0.171f, ParseColor(avatar.pantsColor));
     }
-    if (!avatar.faceAssetUrl.empty()) {
-        const Texture2D faceTexture = itemTexture(avatar.faceAssetUrl).texture;
-        if (faceTexture.id) {
-            DrawOverlay(faceTexture, Rectangle{0, 0, static_cast<float>(faceTexture.width), static_cast<float>(faceTexture.height)}, 0.0f, 1.93f, 0.35f, 0.35f, 0.325f, WHITE);
-        }
+    if (faceTexture.id != 0) {
+        DrawOverlay(faceTexture, Rectangle{0, 0, static_cast<float>(faceTexture.width), static_cast<float>(faceTexture.height)}, 0.0f, 1.93f, 0.35f, 0.35f, 0.325f, WHITE);
     }
     for (const auto& accessory : avatar.accessoryAssets) {
         ModelEntry& entry = model(accessory.assetUrl, accessory.textureAssetUrl);
