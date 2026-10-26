@@ -1,20 +1,20 @@
 {
   "version": "0.2.30",
   "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.30/BluboxClient.exe",
-  "sha256": "4c20342205270f559e25011c5297f0186be7c010c70c0d3adf8a119cba8556bc",
+  "sha256": "8c351f6d489d77b51bb7bb5889b52923805dfb26a076070b2b4b3bf7155ffd47",
   "studioVersion": "0.1.13",
   "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.30/BluboxStudio.exe",
-  "studioSha256": "80d8769893592e4c784f762264a5d920bd5a97af96117fb6d170a8c57866a27d",
+  "studioSha256": "151f1cdb83750f32f52366870f1849512210de869ca566af75596e279ab90aa2",
   "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.30/InterVariable.ttf",
   "studioFontSha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf",
   "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.30/JetBrainsMonoRegular.ttf",
   "studioCodeFontSha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
   "launcherVersion": "0.2.30",
   "launcherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.30/BluboxLauncher.exe",
-  "launcherSha256": "325c5302c6313c62c195f52ddb02f2daeb0b06f3b43bf1593cb810e611c19c70",
+  "launcherSha256": "51b707854773ee22771a4a7b037dd8bcf68d4fe2b41c82edf8af4f69a32db5e5",
   "studioLauncherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.30/BluboxStudioLauncher.exe",
-  "studioLauncherSha256": "3542c178e67e1bc15929788c6383ba2ce5ba6450de7f422893e2c36e93ac48c1",
+  "studioLauncherSha256": "6515ba05101f68269b4ef2292cc28b23c2c9e0f5ea7d3cf322dd1f735cdf66a0",
   "studioLauncherVersion": "0.2.30",
   "setupDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.30/Blubox-Setup.exe",
-  "setupSha256": "213f7b2caecda1efe6fa5b62dbf4adfdddbec05818cb6ef72e916fe5c7042924"
+  "setupSha256": "57099020b1003ba6c9a1cc6f4b67fc885829134c19d58baf150fa92d8f217b89"
 }
