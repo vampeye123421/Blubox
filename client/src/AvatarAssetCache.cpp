@@ -423,11 +423,14 @@ bool GltfNodeWorldTransforms(const nlohmann::json &gltf, std::vector<Matrix> &wo
     return !meshWorldTransforms.empty();
 }
 
-bool AttachAnimationRig(Model &character, const Model &animationSource,
-                        const std::vector<Matrix> &sourceMeshWorldTransforms,
-                        std::vector<Matrix> &baseToAnimationSpace,
-                        std::vector<Matrix> &animationToBaseSpace,
-                        int &headMeshIndex) {
+bool BuildAnimationVertexMappings(
+    const Model &character, const Model &animationSource,
+    const std::vector<Matrix> &sourceMeshWorldTransforms,
+    std::vector<Matrix> &baseToAnimationSpace,
+    std::vector<Matrix> &animationToBaseSpace,
+    std::vector<int> &animationSourceMeshIndices,
+    std::vector<std::vector<int>> &animationSourceVertexIndices,
+    int &headMeshIndex) {
     if (!character.meshes || character.meshCount <= 0 || !animationSource.meshes ||
         animationSource.meshCount <= 0 || animationSource.boneCount <= 0 ||
         !animationSource.bones || !animationSource.bindPose ||
@@ -436,10 +439,10 @@ bool AttachAnimationRig(Model &character, const Model &animationSource,
 
     const Matrix baseToGltf = MatrixRotateX(-PI * 0.5f);
     struct MeshTransfer {
-        std::vector<unsigned char> boneIds;
-        std::vector<float> boneWeights;
+        std::vector<int> vertexIndices;
         Matrix toAnimation{};
         Matrix fromAnimation{};
+        int sourceMeshIndex = -1;
     };
     std::vector<MeshTransfer> transfers(static_cast<std::size_t>(character.meshCount));
 
@@ -456,7 +459,8 @@ bool AttachAnimationRig(Model &character, const Model &animationSource,
              ++sourceMeshIndex) {
             const Mesh &sourceMesh = animationSource.meshes[sourceMeshIndex];
             if (sourceMesh.vertexCount <= 0 || !sourceMesh.vertices ||
-                !sourceMesh.boneIds || !sourceMesh.boneWeights) continue;
+                !sourceMesh.boneIds || !sourceMesh.boneWeights || !sourceMesh.animVertices)
+                continue;
 
             const Matrix toAnimation = MatrixMultiply(
                 sourceMeshWorldTransforms[static_cast<std::size_t>(sourceMeshIndex)], baseToGltf);
@@ -464,8 +468,8 @@ bool AttachAnimationRig(Model &character, const Model &animationSource,
             MeshTransfer candidate;
             candidate.toAnimation = toAnimation;
             candidate.fromAnimation = fromAnimation;
-            candidate.boneIds.resize(static_cast<std::size_t>(characterMesh.vertexCount) * 4);
-            candidate.boneWeights.resize(static_cast<std::size_t>(characterMesh.vertexCount) * 4);
+            candidate.sourceMeshIndex = sourceMeshIndex;
+            candidate.vertexIndices.resize(static_cast<std::size_t>(characterMesh.vertexCount));
             double distanceTotal = 0.0;
             float maximumDistance = 0.0f;
             bool valid = true;
@@ -497,14 +501,7 @@ bool AttachAnimationRig(Model &character, const Model &animationSource,
                 }
                 maximumDistance = std::max(maximumDistance, nearestDistance);
                 distanceTotal += nearestDistance;
-                for (int influence = 0; influence < 4; ++influence) {
-                    const std::size_t target =
-                        static_cast<std::size_t>(vertexIndex) * 4 + influence;
-                    const std::size_t source =
-                        static_cast<std::size_t>(nearestIndex) * 4 + influence;
-                    candidate.boneIds[target] = sourceMesh.boneIds[source];
-                    candidate.boneWeights[target] = sourceMesh.boneWeights[source];
-                }
+                candidate.vertexIndices[static_cast<std::size_t>(vertexIndex)] = nearestIndex;
             }
             if (!valid) continue;
             const float averageDistance =
@@ -518,70 +515,6 @@ bool AttachAnimationRig(Model &character, const Model &animationSource,
         }
         if (!foundTransfer || bestMaximumDistance > 0.0001f) return false;
         transfers[static_cast<std::size_t>(characterMeshIndex)] = std::move(bestTransfer);
-    }
-
-    const auto copyMemory = [](const void *source, std::size_t size) {
-        void *copy = MemAlloc(static_cast<unsigned int>(size));
-        if (copy != nullptr) std::memcpy(copy, source, size);
-        return copy;
-    };
-    character.bones = static_cast<BoneInfo *>(
-        copyMemory(animationSource.bones,
-                   static_cast<std::size_t>(animationSource.boneCount) * sizeof(BoneInfo)));
-    character.bindPose = static_cast<Transform *>(
-        copyMemory(animationSource.bindPose,
-                   static_cast<std::size_t>(animationSource.boneCount) * sizeof(Transform)));
-    if (!character.bones || !character.bindPose) {
-        if (character.bones) MemFree(character.bones);
-        if (character.bindPose) MemFree(character.bindPose);
-        character.bones = nullptr;
-        character.bindPose = nullptr;
-        return false;
-    }
-    character.boneCount = animationSource.boneCount;
-
-    for (int meshIndex = 0; meshIndex < character.meshCount; ++meshIndex) {
-        Mesh &mesh = character.meshes[meshIndex];
-        const MeshTransfer &transfer = transfers[static_cast<std::size_t>(meshIndex)];
-        const std::size_t vertexCount = static_cast<std::size_t>(mesh.vertexCount);
-        mesh.boneIds = static_cast<unsigned char *>(
-            copyMemory(transfer.boneIds.data(), vertexCount * 4));
-        mesh.boneWeights = static_cast<float *>(
-            copyMemory(transfer.boneWeights.data(), vertexCount * 4 * sizeof(float)));
-        mesh.animVertices = static_cast<float *>(
-            copyMemory(mesh.vertices, vertexCount * 3 * sizeof(float)));
-        if (mesh.normals) {
-            mesh.animNormals = static_cast<float *>(
-                copyMemory(mesh.normals, vertexCount * 3 * sizeof(float)));
-        }
-        mesh.boneMatrices = static_cast<Matrix *>(
-            MemAlloc(static_cast<unsigned int>(character.boneCount * sizeof(Matrix))));
-        if (!mesh.boneIds || !mesh.boneWeights || !mesh.animVertices ||
-            (mesh.normals && !mesh.animNormals) || !mesh.boneMatrices) {
-            for (int cleanupIndex = 0; cleanupIndex <= meshIndex; ++cleanupIndex) {
-                Mesh &cleanupMesh = character.meshes[cleanupIndex];
-                MemFree(cleanupMesh.boneIds);
-                MemFree(cleanupMesh.boneWeights);
-                MemFree(cleanupMesh.animVertices);
-                MemFree(cleanupMesh.animNormals);
-                MemFree(cleanupMesh.boneMatrices);
-                cleanupMesh.boneIds = nullptr;
-                cleanupMesh.boneWeights = nullptr;
-                cleanupMesh.animVertices = nullptr;
-                cleanupMesh.animNormals = nullptr;
-                cleanupMesh.boneMatrices = nullptr;
-                cleanupMesh.boneCount = 0;
-            }
-            MemFree(character.bones);
-            MemFree(character.bindPose);
-            character.bones = nullptr;
-            character.bindPose = nullptr;
-            character.boneCount = 0;
-            return false;
-        }
-        mesh.boneCount = character.boneCount;
-        for (int boneIndex = 0; boneIndex < mesh.boneCount; ++boneIndex)
-            mesh.boneMatrices[boneIndex] = MatrixIdentity();
     }
 
     float highestMeshBottom = -std::numeric_limits<float>::max();
@@ -599,110 +532,133 @@ bool AttachAnimationRig(Model &character, const Model &animationSource,
 
     baseToAnimationSpace.clear();
     animationToBaseSpace.clear();
+    animationSourceMeshIndices.clear();
+    animationSourceVertexIndices.clear();
     for (const MeshTransfer &transfer : transfers) {
         baseToAnimationSpace.push_back(transfer.toAnimation);
         animationToBaseSpace.push_back(transfer.fromAnimation);
+        animationSourceMeshIndices.push_back(transfer.sourceMeshIndex);
+        animationSourceVertexIndices.push_back(transfer.vertexIndices);
     }
     headMeshIndex = highestMeshIndex;
     return true;
 }
 
-void UpdateRetargetedAnimation(Model character, ModelAnimation animation, int frame,
+bool UpdateRetargetedAnimation(Model character, Model animationSource,
+                               ModelAnimation animation, int frame,
+                               const BoundingBox &bindBounds,
                                const std::vector<Matrix> &baseToAnimationSpace,
-                               const std::vector<Matrix> &animationToBaseSpace) {
+                               const std::vector<Matrix> &animationToBaseSpace,
+                               const std::vector<int> &animationSourceMeshIndices,
+                               const std::vector<std::vector<int>> &animationSourceVertexIndices) {
+    const auto uploadMesh = [](Mesh &mesh) {
+        if (mesh.vboId[0] && mesh.animVertices) {
+            rlUpdateVertexBuffer(mesh.vboId[0], mesh.animVertices,
+                                 mesh.vertexCount * 3 * static_cast<int>(sizeof(float)), 0);
+        }
+        if (mesh.vboId[2] && mesh.normals && mesh.animNormals) {
+            rlUpdateVertexBuffer(mesh.vboId[2], mesh.animNormals,
+                                 mesh.vertexCount * 3 * static_cast<int>(sizeof(float)), 0);
+        }
+    };
+    const auto restoreBindPose = [&] {
+        for (int meshIndex = 0; meshIndex < character.meshCount; ++meshIndex) {
+            Mesh &mesh = character.meshes[meshIndex];
+            if (mesh.animVertices && mesh.vertices) {
+                std::memcpy(mesh.animVertices, mesh.vertices,
+                            static_cast<std::size_t>(mesh.vertexCount) * 3 * sizeof(float));
+            }
+            if (mesh.normals && mesh.animNormals) {
+                std::memcpy(mesh.animNormals, mesh.normals,
+                            static_cast<std::size_t>(mesh.vertexCount) * 3 * sizeof(float));
+            }
+            uploadMesh(mesh);
+        }
+    };
     if (frame < 0 || frame >= animation.frameCount ||
         baseToAnimationSpace.size() != static_cast<std::size_t>(character.meshCount) ||
-        animationToBaseSpace.size() != static_cast<std::size_t>(character.meshCount)) return;
-    UpdateModelAnimationBones(character, animation, frame);
+        animationToBaseSpace.size() != static_cast<std::size_t>(character.meshCount) ||
+        animationSourceMeshIndices.size() != static_cast<std::size_t>(character.meshCount) ||
+        animationSourceVertexIndices.size() != static_cast<std::size_t>(character.meshCount)) {
+        restoreBindPose();
+        return false;
+    }
+    UpdateModelAnimation(animationSource, animation, frame);
+    const float margin = (bindBounds.max.y - bindBounds.min.y) * 0.5f;
+    const Vector3 minAllowed{bindBounds.min.x - margin, bindBounds.min.y - margin,
+                             bindBounds.min.z - margin};
+    const Vector3 maxAllowed{bindBounds.max.x + margin, bindBounds.max.y + margin,
+                             bindBounds.max.z + margin};
+    bool validPose = true;
     for (int meshIndex = 0; meshIndex < character.meshCount; ++meshIndex) {
         Mesh &mesh = character.meshes[meshIndex];
-        const Matrix &toAnimation = baseToAnimationSpace[static_cast<std::size_t>(meshIndex)];
         const Matrix &fromAnimation = animationToBaseSpace[static_cast<std::size_t>(meshIndex)];
-        Matrix toAnimationNormal = toAnimation;
-        toAnimationNormal.m12 = toAnimationNormal.m13 = toAnimationNormal.m14 = 0.0f;
+        const int sourceMeshIndex =
+            animationSourceMeshIndices[static_cast<std::size_t>(meshIndex)];
+        if (!mesh.animVertices || !mesh.vertices) {
+            restoreBindPose();
+            return false;
+        }
+        if (sourceMeshIndex < 0 || sourceMeshIndex >= animationSource.meshCount) {
+            restoreBindPose();
+            return false;
+        }
+        const Mesh &sourceMesh = animationSource.meshes[sourceMeshIndex];
+        const std::vector<int> &sourceVertexIndices =
+            animationSourceVertexIndices[static_cast<std::size_t>(meshIndex)];
+        if (!sourceMesh.animVertices ||
+            sourceVertexIndices.size() != static_cast<std::size_t>(mesh.vertexCount)) {
+            restoreBindPose();
+            return false;
+        }
         Matrix fromAnimationNormal = fromAnimation;
         fromAnimationNormal.m12 = fromAnimationNormal.m13 = fromAnimationNormal.m14 = 0.0f;
         for (int vertexIndex = 0; vertexIndex < mesh.vertexCount; ++vertexIndex) {
-            const Vector3 basePosition{
-                mesh.vertices[vertexIndex * 3],
-                mesh.vertices[vertexIndex * 3 + 1],
-                mesh.vertices[vertexIndex * 3 + 2]};
-            const Vector3 sourcePosition = Vector3Transform(basePosition, toAnimation);
-            Vector3 sourceNormal{};
-            if (mesh.normals) {
-                const Vector3 baseNormal{
-                    mesh.normals[vertexIndex * 3],
-                    mesh.normals[vertexIndex * 3 + 1],
-                    mesh.normals[vertexIndex * 3 + 2]};
-                sourceNormal = Vector3Transform(baseNormal, toAnimationNormal);
+            const int sourceVertexIndex =
+                sourceVertexIndices[static_cast<std::size_t>(vertexIndex)];
+            if (sourceVertexIndex < 0 || sourceVertexIndex >= sourceMesh.vertexCount) {
+                restoreBindPose();
+                return false;
             }
-            Vector3 animatedPosition{};
-            Vector3 animatedNormal{};
-            float totalWeight = 0.0f;
-            for (int influence = 0; influence < 4; ++influence) {
-                const std::size_t index = static_cast<std::size_t>(vertexIndex) * 4 + influence;
-                const float weight = mesh.boneWeights[index];
-                const unsigned char boneIndex = mesh.boneIds[index];
-                if (weight <= 0.0f || boneIndex >= mesh.boneCount) continue;
-                const Vector3 transformedPosition =
-                    Vector3Transform(sourcePosition, mesh.boneMatrices[boneIndex]);
-                animatedPosition.x += transformedPosition.x * weight;
-                animatedPosition.y += transformedPosition.y * weight;
-                animatedPosition.z += transformedPosition.z * weight;
-                if (mesh.normals) {
-                    const Vector3 transformedNormal =
-                        Vector3Transform(sourceNormal, mesh.boneMatrices[boneIndex]);
-                    animatedNormal.x += transformedNormal.x * weight;
-                    animatedNormal.y += transformedNormal.y * weight;
-                    animatedNormal.z += transformedNormal.z * weight;
-                }
-                totalWeight += weight;
-            }
-            if (totalWeight > 0.0001f) {
-                animatedPosition.x /= totalWeight;
-                animatedPosition.y /= totalWeight;
-                animatedPosition.z /= totalWeight;
-                animatedPosition = Vector3Transform(animatedPosition, fromAnimation);
-            } else {
-                animatedPosition = basePosition;
+            const Vector3 sourcePosition{
+                sourceMesh.animVertices[sourceVertexIndex * 3],
+                sourceMesh.animVertices[sourceVertexIndex * 3 + 1],
+                sourceMesh.animVertices[sourceVertexIndex * 3 + 2]};
+            const Vector3 animatedPosition = Vector3Transform(sourcePosition, fromAnimation);
+            if (!std::isfinite(animatedPosition.x) || !std::isfinite(animatedPosition.y) ||
+                !std::isfinite(animatedPosition.z) || animatedPosition.x < minAllowed.x ||
+                animatedPosition.y < minAllowed.y || animatedPosition.z < minAllowed.z ||
+                animatedPosition.x > maxAllowed.x || animatedPosition.y > maxAllowed.y ||
+                animatedPosition.z > maxAllowed.z) {
+                validPose = false;
             }
             mesh.animVertices[vertexIndex * 3] = animatedPosition.x;
             mesh.animVertices[vertexIndex * 3 + 1] = animatedPosition.y;
             mesh.animVertices[vertexIndex * 3 + 2] = animatedPosition.z;
 
             if (mesh.normals) {
-                if (totalWeight > 0.0001f) {
-                    animatedNormal.x /= totalWeight;
-                    animatedNormal.y /= totalWeight;
-                    animatedNormal.z /= totalWeight;
-                    animatedNormal = Vector3Transform(animatedNormal, fromAnimationNormal);
-                    const float normalLength = std::sqrt(
-                        animatedNormal.x * animatedNormal.x +
-                        animatedNormal.y * animatedNormal.y +
-                        animatedNormal.z * animatedNormal.z);
-                    if (normalLength > 0.0001f) {
-                        animatedNormal.x /= normalLength;
-                        animatedNormal.y /= normalLength;
-                        animatedNormal.z /= normalLength;
-                    }
-                } else {
-                    animatedNormal = Vector3{
-                        mesh.normals[vertexIndex * 3],
-                        mesh.normals[vertexIndex * 3 + 1],
-                        mesh.normals[vertexIndex * 3 + 2]};
-                }
+                const Vector3 animatedNormal = sourceMesh.animNormals
+                    ? Vector3Transform(Vector3{
+                          sourceMesh.animNormals[sourceVertexIndex * 3],
+                          sourceMesh.animNormals[sourceVertexIndex * 3 + 1],
+                          sourceMesh.animNormals[sourceVertexIndex * 3 + 2]},
+                          fromAnimationNormal)
+                    : Vector3{mesh.normals[vertexIndex * 3],
+                              mesh.normals[vertexIndex * 3 + 1],
+                              mesh.normals[vertexIndex * 3 + 2]};
                 mesh.animNormals[vertexIndex * 3] = animatedNormal.x;
                 mesh.animNormals[vertexIndex * 3 + 1] = animatedNormal.y;
                 mesh.animNormals[vertexIndex * 3 + 2] = animatedNormal.z;
             }
         }
-        rlUpdateVertexBuffer(mesh.vboId[0], mesh.animVertices,
-                             mesh.vertexCount * 3 * static_cast<int>(sizeof(float)), 0);
-        if (mesh.normals) {
-            rlUpdateVertexBuffer(mesh.vboId[2], mesh.animNormals,
-                                 mesh.vertexCount * 3 * static_cast<int>(sizeof(float)), 0);
-        }
     }
+    if (!validPose) {
+        restoreBindPose();
+        return false;
+    }
+    for (int meshIndex = 0; meshIndex < character.meshCount; ++meshIndex)
+        uploadMesh(character.meshes[meshIndex]);
+    return true;
 }
 } // namespace
 
@@ -806,7 +762,7 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
             writeAsset(walkPath, blubox::kR6WalkAnimationData, blubox::kR6WalkAnimationDataSize) &&
             writeAsset(jumpPath, blubox::kR6JumpAnimationData, blubox::kR6JumpAnimationDataSize);
         Model animationSource{};
-        bool rigAttached = false;
+        bool animationReady = false;
         if (assetsStaged) {
             animationSource = LoadModel(walkPath.string().c_str());
             walkAnimations_ = LoadModelAnimations(walkPath.string().c_str(), &walkAnimationCount_);
@@ -830,7 +786,6 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
             return true;
         };
 
-        bool skinnedMeshesReady = false;
         if (assetsStaged && animationSource.meshCount > 0 &&
             animationMatchesModel(animationSource, walkAnimations_, walkAnimationCount_) &&
             animationMatchesModel(animationSource, jumpAnimations_, jumpAnimationCount_)) {
@@ -840,49 +795,27 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
             if (ParseGlbJson(blubox::kR6WalkAnimationData,
                              blubox::kR6WalkAnimationDataSize, walkGltf) &&
                 GltfNodeWorldTransforms(walkGltf, nodeWorldTransforms,
-                                        sourceMeshWorldTransforms)) {
-                rigAttached = AttachAnimationRig(baseCharacter_, animationSource,
-                                                  sourceMeshWorldTransforms,
-                                                  baseToAnimationSpace_,
-                                                  animationToBaseSpace_,
-                                                  headMeshIndex_);
-                skinnedMeshesReady = rigAttached;
+                                        sourceMeshWorldTransforms) &&
+                BuildAnimationVertexMappings(baseCharacter_, animationSource,
+                                             sourceMeshWorldTransforms,
+                                             baseToAnimationSpace_,
+                                             animationToBaseSpace_,
+                                             animationSourceMeshIndices_,
+                                             animationSourceVertexIndices_,
+                                             headMeshIndex_)) {
+                animationSource_ = animationSource;
+                animationSource = Model{};
+                animationReady = true;
             }
         }
-        if (skinnedMeshesReady &&
-            animationMatchesModel(baseCharacter_, walkAnimations_, walkAnimationCount_) &&
-            animationMatchesModel(baseCharacter_, jumpAnimations_, jumpAnimationCount_)) {
+        if (animationReady) {
             TraceLog(LOG_INFO,
                      "Retargeted R6 animation clips onto the existing character (%d bones, walk %d frames, jump %d frames).",
-                     baseCharacter_.boneCount, walkAnimations_[0].frameCount,
+                     animationSource_.boneCount, walkAnimations_[0].frameCount,
                      jumpAnimations_[0].frameCount);
         } else {
             TraceLog(LOG_WARNING,
                      "Could not retarget R6 animation clips onto the existing character; the original character will remain unchanged.");
-            if (rigAttached) {
-                for (int meshIndex = 0; meshIndex < baseCharacter_.meshCount; ++meshIndex) {
-                    Mesh &mesh = baseCharacter_.meshes[meshIndex];
-                    MemFree(mesh.boneIds);
-                    MemFree(mesh.boneWeights);
-                    MemFree(mesh.animVertices);
-                    MemFree(mesh.animNormals);
-                    MemFree(mesh.boneMatrices);
-                    mesh.boneIds = nullptr;
-                    mesh.boneWeights = nullptr;
-                    mesh.animVertices = nullptr;
-                    mesh.animNormals = nullptr;
-                    mesh.boneMatrices = nullptr;
-                    mesh.boneCount = 0;
-                }
-                MemFree(baseCharacter_.bones);
-                MemFree(baseCharacter_.bindPose);
-                baseCharacter_.bones = nullptr;
-                baseCharacter_.bindPose = nullptr;
-                baseCharacter_.boneCount = 0;
-                baseToAnimationSpace_.clear();
-                animationToBaseSpace_.clear();
-                rigAttached = false;
-            }
             if (walkAnimations_) UnloadModelAnimations(walkAnimations_, walkAnimationCount_);
             walkAnimations_ = nullptr;
             walkAnimationCount_ = 0;
@@ -891,6 +824,13 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
             jumpAnimationCount_ = 0;
         }
         if (animationSource.meshCount > 0) UnloadModel(animationSource);
+        if (!animationReady) {
+            baseToAnimationSpace_.clear();
+            animationToBaseSpace_.clear();
+            animationSourceMeshIndices_.clear();
+            animationSourceVertexIndices_.clear();
+            headMeshIndex_ = -1;
+        }
         std::error_code ignored;
         std::filesystem::remove(walkPath, ignored);
         std::filesystem::remove(jumpPath, ignored);
@@ -923,7 +863,8 @@ bool AvatarAssetCache::DrawBaseCharacter(Vector3 feetPosition,
         baseCharacter_.materials[index].maps[MATERIAL_MAP_DIFFUSE].color = tint;
     }
 
-    if (baseCharacter_.boneCount > 0) {
+    bool animationApplied = false;
+    if (!animationRetargetingDisabled_ && animationSource_.boneCount > 0) {
         const ModelAnimation *activeAnimation = walkAnimations_;
         int activeAnimationCount = walkAnimationCount_;
         if (animation == CharacterAnimation::Jump) {
@@ -939,8 +880,15 @@ bool AvatarAssetCache::DrawBaseCharacter(Vector3 feetPosition,
                 ? 0
                 : std::clamp(static_cast<int>(cycleTime / duration * clip.frameCount),
                              0, clip.frameCount - 1);
-            UpdateRetargetedAnimation(baseCharacter_, clip, frame,
-                                  baseToAnimationSpace_, animationToBaseSpace_);
+            animationApplied = UpdateRetargetedAnimation(
+                baseCharacter_, animationSource_, clip, frame, baseCharacterBounds_,
+                baseToAnimationSpace_, animationToBaseSpace_,
+                animationSourceMeshIndices_, animationSourceVertexIndices_);
+            if (!animationApplied) {
+                animationRetargetingDisabled_ = true;
+                TraceLog(LOG_WARNING,
+                         "R6 animation produced an invalid pose; keeping the character in its bind pose.");
+            }
         }
     }
 
@@ -959,27 +907,32 @@ bool AvatarAssetCache::DrawBaseCharacter(Vector3 feetPosition,
         (baseCharacterBounds_.max.z - modelCenterZ) * baseCharacterScale_ + 0.002f;
     Matrix faceTransform{};
     const Matrix *faceTransformPointer = nullptr;
-    if (headMeshIndex_ >= 0 && headMeshIndex_ < baseCharacter_.meshCount &&
+    if (animationApplied && headMeshIndex_ >= 0 && headMeshIndex_ < baseCharacter_.meshCount &&
         static_cast<std::size_t>(headMeshIndex_) < baseToAnimationSpace_.size() &&
         static_cast<std::size_t>(headMeshIndex_) < animationToBaseSpace_.size() &&
-        baseCharacter_.meshes[headMeshIndex_].boneMatrices) {
-        int headBoneIndex = -1;
-        for (int boneIndex = 0; boneIndex < baseCharacter_.boneCount; ++boneIndex) {
-            if (std::strcmp(baseCharacter_.bones[boneIndex].name, "Head_01_7") == 0) {
-                headBoneIndex = boneIndex;
-                break;
+        static_cast<std::size_t>(headMeshIndex_) < animationSourceMeshIndices_.size()) {
+        const int sourceMeshIndex =
+            animationSourceMeshIndices_[static_cast<std::size_t>(headMeshIndex_)];
+        if (sourceMeshIndex >= 0 && sourceMeshIndex < animationSource_.meshCount &&
+            animationSource_.meshes[sourceMeshIndex].boneMatrices) {
+            int headBoneIndex = -1;
+            for (int boneIndex = 0; boneIndex < animationSource_.boneCount; ++boneIndex) {
+                if (std::strcmp(animationSource_.bones[boneIndex].name, "Head_01_7") == 0) {
+                    headBoneIndex = boneIndex;
+                    break;
+                }
             }
-        }
-        if (headBoneIndex >= 0) {
-            const Matrix &toAnimation =
-                baseToAnimationSpace_[static_cast<std::size_t>(headMeshIndex_)];
-            const Matrix &fromAnimation =
-                animationToBaseSpace_[static_cast<std::size_t>(headMeshIndex_)];
-            faceTransform = MatrixMultiply(
-                MatrixMultiply(fromAnimation,
-                               baseCharacter_.meshes[headMeshIndex_].boneMatrices[headBoneIndex]),
-                toAnimation);
-            faceTransformPointer = &faceTransform;
+            if (headBoneIndex >= 0) {
+                const Matrix &toAnimation =
+                    baseToAnimationSpace_[static_cast<std::size_t>(headMeshIndex_)];
+                const Matrix &fromAnimation =
+                    animationToBaseSpace_[static_cast<std::size_t>(headMeshIndex_)];
+                faceTransform = MatrixMultiply(
+                    MatrixMultiply(fromAnimation,
+                                   animationSource_.meshes[sourceMeshIndex].boneMatrices[headBoneIndex]),
+                    toAnimation);
+                faceTransformPointer = &faceTransform;
+            }
         }
     }
     Draw(avatar, false, faceFrontZ, faceTransformPointer);
@@ -1184,6 +1137,8 @@ void AvatarAssetCache::Unload() noexcept {
     if (baseCharacter_.meshCount > 0) UnloadModel(baseCharacter_);
     baseCharacter_ = Model{};
     baseCharacterMaterials_.clear();
+    if (animationSource_.meshCount > 0) UnloadModel(animationSource_);
+    animationSource_ = Model{};
     if (walkAnimations_) UnloadModelAnimations(walkAnimations_, walkAnimationCount_);
     walkAnimations_ = nullptr;
     walkAnimationCount_ = 0;
@@ -1192,8 +1147,11 @@ void AvatarAssetCache::Unload() noexcept {
     jumpAnimationCount_ = 0;
     baseToAnimationSpace_.clear();
     animationToBaseSpace_.clear();
+    animationSourceMeshIndices_.clear();
+    animationSourceVertexIndices_.clear();
     headMeshIndex_ = -1;
     baseCharacterLoaded_ = false;
+    animationRetargetingDisabled_ = false;
     for (auto& [_, entry] : textures_) if (entry.texture.id) UnloadTexture(entry.texture);
     for (auto& [_, entry] : models_) {
         if (!entry.model.meshCount) continue;

@@ -34,12 +34,15 @@ private:
     Model baseCharacter_{};
     BoundingBox baseCharacterBounds_{};
     std::unordered_map<std::string, int> baseCharacterMaterials_;
+    Model animationSource_{};
     ModelAnimation *walkAnimations_ = nullptr;
     int walkAnimationCount_ = 0;
     ModelAnimation *jumpAnimations_ = nullptr;
     int jumpAnimationCount_ = 0;
     std::vector<Matrix> baseToAnimationSpace_;
     std::vector<Matrix> animationToBaseSpace_;
+    std::vector<int> animationSourceMeshIndices_;
+    std::vector<std::vector<int>> animationSourceVertexIndices_;
     // The client owns this shader; cached accessories only borrow the handle.
     // Assigning it per material is required because DrawModelEx uses each
     // material's shader instead of inheriting BeginShaderMode's active shader.
@@ -48,6 +51,7 @@ private:
     float baseCharacterScale_ = 1.0f;
     int headMeshIndex_ = -1;
     bool baseCharacterLoaded_ = false;
+    bool animationRetargetingDisabled_ = false;
     TextureEntry& texture(const std::string& url);
     TextureEntry& itemTexture(const std::string& url);
     ModelEntry& model(const std::string& url, const std::string& textureUrl);
