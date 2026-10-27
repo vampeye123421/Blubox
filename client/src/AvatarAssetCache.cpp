@@ -96,6 +96,33 @@ bool DownloadAsset(std::string_view url, std::size_t maximum, std::vector<unsign
 }
 #endif
 
+std::string ImageFileType(const std::string& url, const std::vector<unsigned char>& bytes) {
+    if (bytes.size() >= 8 && bytes[0] == 0x89 && bytes[1] == 'P' &&
+        bytes[2] == 'N' && bytes[3] == 'G' && bytes[4] == 0x0d &&
+        bytes[5] == 0x0a && bytes[6] == 0x1a && bytes[7] == 0x0a) return ".png";
+    if (bytes.size() >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff) return ".jpg";
+    if (bytes.size() >= 6 && std::string_view(reinterpret_cast<const char*>(bytes.data()), 6).starts_with("GIF8")) return ".gif";
+    if (bytes.size() >= 2 && bytes[0] == 'B' && bytes[1] == 'M') return ".bmp";
+    if (bytes.size() >= 4 && std::string_view(reinterpret_cast<const char*>(bytes.data()), 4) == "qoif") return ".qoi";
+    if (bytes.size() >= 4 && std::string_view(reinterpret_cast<const char*>(bytes.data()), 4) == "DDS ") return ".dds";
+    if (bytes.size() >= 4 && std::string_view(reinterpret_cast<const char*>(bytes.data()), 4) == "8BPS") return ".psd";
+
+    const std::size_t suffixEnd = url.find_first_of("?#");
+    const std::string_view path(url.data(), suffixEnd == std::string::npos ? url.size() : suffixEnd);
+    const std::size_t extensionAt = path.find_last_of('.');
+    if (extensionAt == std::string_view::npos) return ".png";
+    std::string extension(path.substr(extensionAt));
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
+        extension == ".bmp" || extension == ".tga" || extension == ".gif" ||
+        extension == ".qoi" || extension == ".psd" || extension == ".dds" ||
+        extension == ".hdr" || extension == ".ktx" || extension == ".astc" ||
+        extension == ".pkm" || extension == ".pvr") return extension;
+    return ".png";
+}
+
 Color ParseColor(std::string_view value) {
     if (value.size() != 7 || value[0] != '#') return Color{255, 255, 255, 255};
     unsigned int rgb = 0;
@@ -322,12 +349,17 @@ bool AvatarAssetCache::DrawBaseCharacter(Vector3 feetPosition,
 
 AvatarAssetCache::TextureEntry& AvatarAssetCache::texture(const std::string& url) {
     auto& entry = textures_[url];
-    if (entry.attempted) return entry;
+    if (entry.texture.id || (entry.attempted && GetTime() < entry.retryAt)) return entry;
     entry.attempted = true;
+    entry.retryAt = GetTime() + 10.0;
 #if defined(_WIN32)
     std::vector<unsigned char> bytes;
-    if (!DownloadAsset(url, kMaxTextureBytes, bytes)) return entry;
-    Image source = LoadImageFromMemory(".png", bytes.data(), static_cast<int>(bytes.size()));
+    if (!DownloadAsset(url, kMaxTextureBytes, bytes)) {
+        TraceLog(LOG_WARNING, "Could not download an avatar clothing texture.");
+        return entry;
+    }
+    const std::string fileType = ImageFileType(url, bytes);
+    Image source = LoadImageFromMemory(fileType.c_str(), bytes.data(), static_cast<int>(bytes.size()));
     if (!source.data || source.width != 585 || source.height != 559) {
         if (source.data) UnloadImage(source);
         TraceLog(LOG_WARNING, "Avatar clothing asset was not a valid 585x559 PNG template.");
@@ -335,25 +367,32 @@ AvatarAssetCache::TextureEntry& AvatarAssetCache::texture(const std::string& url
     }
     entry.texture = LoadTextureFromImage(source);
     UnloadImage(source);
+    entry.retryAt = 0.0;
 #endif
     return entry;
 }
 
 AvatarAssetCache::TextureEntry& AvatarAssetCache::itemTexture(const std::string& url) {
     auto& entry = textures_[url];
-    if (entry.attempted) return entry;
+    if (entry.texture.id || (entry.attempted && GetTime() < entry.retryAt)) return entry;
     entry.attempted = true;
+    entry.retryAt = GetTime() + 10.0;
 #if defined(_WIN32)
     std::vector<unsigned char> bytes;
-    if (!DownloadAsset(url, kMaxTextureBytes, bytes)) return entry;
-    Image source = LoadImageFromMemory(".png", bytes.data(), static_cast<int>(bytes.size()));
+    if (!DownloadAsset(url, kMaxTextureBytes, bytes)) {
+        TraceLog(LOG_WARNING, "Could not download a marketplace avatar texture.");
+        return entry;
+    }
+    const std::string fileType = ImageFileType(url, bytes);
+    Image source = LoadImageFromMemory(fileType.c_str(), bytes.data(), static_cast<int>(bytes.size()));
     if (!source.data || source.width <= 0 || source.height <= 0) {
         if (source.data) UnloadImage(source);
-        TraceLog(LOG_WARNING, "Avatar accessory texture was not a valid PNG.");
+        TraceLog(LOG_WARNING, "Marketplace avatar texture could not be decoded.");
         return entry;
     }
     entry.texture = LoadTextureFromImage(source);
     UnloadImage(source);
+    entry.retryAt = 0.0;
 #endif
     return entry;
 }

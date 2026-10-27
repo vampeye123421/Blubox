@@ -899,7 +899,7 @@ void GameClient::DrawFrame() {
         const Vector3 remotePosition{remote.x, remote.y, remote.z};
         const Color remoteTint = PlayerColorForSession(remote.sessionId, playerColorSlots_);
         DrawAvatar(remotePosition, remote, remoteTint, avatarAssets_,
-                   characterModelsReady_ ? &characterSphereModel_ : nullptr);
+                   characterModelsReady_ ? &characterSphereModel_ : nullptr, remote.yaw);
 
         const Vector3 remoteFeet{remote.x, remote.y - characterHalfHeight, remote.z};
         JPH::RVec3 remoteGround;

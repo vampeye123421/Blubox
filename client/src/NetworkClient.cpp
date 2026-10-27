@@ -321,6 +321,9 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
         localAvatar_.userId = userId_;
         localAvatar_.isVerified = userVerified_;
         if (!ReadAvatar(std::string_view(reinterpret_cast<const char *>(bytes + 15 + idLength), avatarLength), localAvatar_)) return;
+        if (localAvatar_.faceId != "face-default" && localAvatar_.faceAssetUrl.empty())
+            TraceLog(LOG_WARNING, "Marketplace face %s was selected but the join token included no face image URL.",
+                     localAvatar_.faceId.c_str());
         authenticated_ = true;
         disconnectKind_ = DisconnectKind::None;
         if (session_ != nullptr) {

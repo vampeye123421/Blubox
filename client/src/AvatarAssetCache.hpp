@@ -20,7 +20,7 @@ public:
     void Unload() noexcept;
 
 private:
-    struct TextureEntry { Texture2D texture{}; bool attempted = false; };
+    struct TextureEntry { Texture2D texture{}; bool attempted = false; double retryAt = 0.0; };
     struct ModelEntry { Model model{}; BoundingBox bounds{}; bool attempted = false; bool hasExternalTexture = false; };
     Model baseCharacter_{};
     BoundingBox baseCharacterBounds_{};
