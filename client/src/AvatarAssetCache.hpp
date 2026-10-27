@@ -9,10 +9,17 @@
 // asset URL. Network snapshots only carry immutable metadata.
 class AvatarAssetCache {
 public:
+    enum class CharacterAnimation {
+        Idle,
+        Walk,
+        Jump
+    };
+
     ~AvatarAssetCache();
     bool LoadBaseCharacter(const Shader& lightingShader);
     bool DrawBaseCharacter(Vector3 feetPosition, const NetworkPlayerSnapshot& avatar,
-                           float facingYaw);
+                           float facingYaw, CharacterAnimation animation,
+                           float animationTimeSeconds);
     void Draw(const NetworkPlayerSnapshot& avatar, bool drawClothingOverlays = true,
               float faceFrontZ = 0.325f);
     void DrawGroundShadow(Vector3 groundPoint, Vector3 feetPosition,
@@ -26,12 +33,20 @@ private:
     Model baseCharacter_{};
     BoundingBox baseCharacterBounds_{};
     std::unordered_map<std::string, int> baseCharacterMaterials_;
+    Model animatedCharacter_{};
+    BoundingBox animatedCharacterBounds_{};
+    std::unordered_map<std::string, int> animatedCharacterMaterials_;
+    ModelAnimation *walkAnimations_ = nullptr;
+    int walkAnimationCount_ = 0;
+    ModelAnimation *jumpAnimations_ = nullptr;
+    int jumpAnimationCount_ = 0;
     // The client owns this shader; cached accessories only borrow the handle.
     // Assigning it per material is required because DrawModelEx uses each
     // material's shader instead of inheriting BeginShaderMode's active shader.
     Shader lightingShader_{};
     Texture2D shadowTexture_{};
     float baseCharacterScale_ = 1.0f;
+    float animatedCharacterScale_ = 1.0f;
     bool baseCharacterLoaded_ = false;
     TextureEntry& texture(const std::string& url);
     TextureEntry& itemTexture(const std::string& url);

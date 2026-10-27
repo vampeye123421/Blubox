@@ -1,6 +1,8 @@
 #include "AvatarAssetCache.hpp"
 #include "RaylibCompat.hpp"
 #include "BluboxR6Character.hpp"
+#include "BluboxR6JumpAnimation.hpp"
+#include "BluboxR6WalkAnimation.hpp"
 #include <nlohmann/json.hpp>
 #include <rlgl.h>
 
@@ -9,6 +11,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string_view>
@@ -38,6 +41,7 @@ constexpr std::size_t kMaxTextureBytes = 5u * 1024u * 1024u;
 constexpr std::size_t kMaxModelBytes = 30u * 1024u * 1024u;
 constexpr std::string_view kAssetPath = "/storage/v1/object/public/marketplace-assets/";
 constexpr float kAvatarTargetHeight = 2.24f;
+constexpr float kGltfAnimationFrameSeconds = 0.017f;
 
 #if defined(_WIN32)
 std::wstring ToWide(std::string_view text) {
@@ -308,6 +312,138 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
         for (int i = 0; i < baseCharacter_.materialCount; ++i)
             baseCharacter_.materials[i].shader = lightingShader;
     }
+
+    if (!error) {
+        const auto processId = static_cast<unsigned long long>(GetCurrentProcessId());
+        const auto walkPath = tempRoot / ("blubox-r6-walk-" + std::to_string(processId) + ".glb");
+        const auto jumpPath = tempRoot / ("blubox-r6-jump-" + std::to_string(processId) + ".glb");
+        const auto writeAsset = [](const std::filesystem::path &path,
+                                   const unsigned char *data, std::size_t size) {
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            return output && output.write(reinterpret_cast<const char *>(data),
+                                          static_cast<std::streamsize>(size));
+        };
+        const auto validGlb = [](const unsigned char *data, std::size_t size) {
+            return size >= 20 && data[0] == 'g' && data[1] == 'l' &&
+                   data[2] == 'T' && data[3] == 'F';
+        };
+        const bool assetsStaged = validGlb(blubox::kR6WalkAnimationData,
+                                           blubox::kR6WalkAnimationDataSize) &&
+            validGlb(blubox::kR6JumpAnimationData, blubox::kR6JumpAnimationDataSize) &&
+            writeAsset(walkPath, blubox::kR6WalkAnimationData, blubox::kR6WalkAnimationDataSize) &&
+            writeAsset(jumpPath, blubox::kR6JumpAnimationData, blubox::kR6JumpAnimationDataSize);
+        if (assetsStaged) {
+            animatedCharacter_ = LoadModel(walkPath.string().c_str());
+            walkAnimations_ = LoadModelAnimations(walkPath.string().c_str(), &walkAnimationCount_);
+            jumpAnimations_ = LoadModelAnimations(jumpPath.string().c_str(), &jumpAnimationCount_);
+        }
+        std::error_code ignored;
+        std::filesystem::remove(walkPath, ignored);
+        std::filesystem::remove(jumpPath, ignored);
+
+        const auto animationMatchesModel = [](const Model &model,
+                                              const ModelAnimation *animations, int count) {
+            if (model.boneCount <= 0 || !model.bones || !animations || count <= 0) return false;
+            for (int animationIndex = 0; animationIndex < count; ++animationIndex) {
+                const ModelAnimation &animation = animations[animationIndex];
+                if (animation.frameCount <= 0 || animation.boneCount != model.boneCount ||
+                    !animation.bones || !animation.framePoses) return false;
+                for (int boneIndex = 0; boneIndex < model.boneCount; ++boneIndex) {
+                    if (std::strcmp(model.bones[boneIndex].name, animation.bones[boneIndex].name) != 0)
+                        return false;
+                }
+            }
+            return true;
+        };
+
+        bool skinnedMeshesReady = animatedCharacter_.meshCount > 0 &&
+                                  animatedCharacter_.meshes != nullptr;
+        if (skinnedMeshesReady) {
+            for (int meshIndex = 0; meshIndex < animatedCharacter_.meshCount; ++meshIndex) {
+                const Mesh &mesh = animatedCharacter_.meshes[meshIndex];
+                if (mesh.boneCount != animatedCharacter_.boneCount || !mesh.boneIds ||
+                    !mesh.boneWeights || !mesh.animVertices || !mesh.animNormals) {
+                    skinnedMeshesReady = false;
+                    break;
+                }
+            }
+        }
+        if (skinnedMeshesReady &&
+            animationMatchesModel(animatedCharacter_, walkAnimations_, walkAnimationCount_) &&
+            animationMatchesModel(animatedCharacter_, jumpAnimations_, jumpAnimationCount_)) {
+            animatedCharacterBounds_ = GetModelBoundingBox(animatedCharacter_);
+            const float animatedHeight =
+                animatedCharacterBounds_.max.y - animatedCharacterBounds_.min.y;
+            if (animatedHeight > 0.0001f && std::isfinite(animatedHeight)) {
+                animatedCharacterScale_ = kAvatarTargetHeight / animatedHeight;
+                if (lightingShader.id != 0) {
+                    for (int i = 0; i < animatedCharacter_.materialCount; ++i)
+                        animatedCharacter_.materials[i].shader = lightingShader;
+                }
+
+                const std::uint32_t walkJsonLength =
+                    static_cast<std::uint32_t>(blubox::kR6WalkAnimationData[12]) |
+                    (static_cast<std::uint32_t>(blubox::kR6WalkAnimationData[13]) << 8) |
+                    (static_cast<std::uint32_t>(blubox::kR6WalkAnimationData[14]) << 16) |
+                    (static_cast<std::uint32_t>(blubox::kR6WalkAnimationData[15]) << 24);
+                const std::uint32_t walkJsonType =
+                    static_cast<std::uint32_t>(blubox::kR6WalkAnimationData[16]) |
+                    (static_cast<std::uint32_t>(blubox::kR6WalkAnimationData[17]) << 8) |
+                    (static_cast<std::uint32_t>(blubox::kR6WalkAnimationData[18]) << 16) |
+                    (static_cast<std::uint32_t>(blubox::kR6WalkAnimationData[19]) << 24);
+                if (walkJsonType == 0x4E4F534Au &&
+                    walkJsonLength <= blubox::kR6WalkAnimationDataSize - 20) {
+                    try {
+                        const auto *jsonBegin =
+                            reinterpret_cast<const char *>(blubox::kR6WalkAnimationData + 20);
+                        const nlohmann::json animationGltf =
+                            nlohmann::json::parse(jsonBegin, jsonBegin + walkJsonLength);
+                        if (animationGltf.contains("materials") &&
+                            animationGltf["materials"].is_array()) {
+                            for (std::size_t index = 0;
+                                 index < animationGltf["materials"].size(); ++index) {
+                                const auto &material = animationGltf["materials"][index];
+                                if (!material.is_object() || !material.contains("name") ||
+                                    !material["name"].is_string()) continue;
+                                if (index + 1 <
+                                    static_cast<std::size_t>(animatedCharacter_.materialCount)) {
+                                    animatedCharacterMaterials_[material["name"].get<std::string>()] =
+                                        static_cast<int>(index + 1);
+                                }
+                            }
+                        }
+                    } catch (const std::exception &) {
+                        TraceLog(LOG_WARNING, "Animated R6 material metadata could not be parsed.");
+                    }
+                }
+                TraceLog(LOG_INFO,
+                         "Loaded animated Blubox R6 character (%d bones, walk %d frames, jump %d frames).",
+                         animatedCharacter_.boneCount, walkAnimations_[0].frameCount,
+                         jumpAnimations_[0].frameCount);
+            } else {
+                skinnedMeshesReady = false;
+            }
+        } else {
+            skinnedMeshesReady = false;
+        }
+
+        if (!skinnedMeshesReady) {
+            TraceLog(LOG_WARNING,
+                     "Animated R6 assets are incompatible; using the static character fallback.");
+            if (animatedCharacter_.meshCount > 0) UnloadModel(animatedCharacter_);
+            animatedCharacter_ = Model{};
+            if (walkAnimations_) UnloadModelAnimations(walkAnimations_, walkAnimationCount_);
+            walkAnimations_ = nullptr;
+            walkAnimationCount_ = 0;
+            if (jumpAnimations_) UnloadModelAnimations(jumpAnimations_, jumpAnimationCount_);
+            jumpAnimations_ = nullptr;
+            jumpAnimationCount_ = 0;
+            animatedCharacterMaterials_.clear();
+        }
+    } else {
+        TraceLog(LOG_WARNING, "Could not locate a temporary directory for animated R6 assets.");
+    }
+
     TraceLog(LOG_INFO, "Loaded Blubox R6 character (%d meshes, %.2f units tall).",
              baseCharacter_.meshCount, height * baseCharacterScale_);
     return true;
@@ -319,7 +455,8 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
 
 bool AvatarAssetCache::DrawBaseCharacter(Vector3 feetPosition,
                                          const NetworkPlayerSnapshot& avatar,
-                                         float facingYaw) {
+                                         float facingYaw, CharacterAnimation animation,
+                                         float animationTimeSeconds) {
     if (!baseCharacter_.meshCount || baseCharacterScale_ <= 0.0f) return false;
     const Color skin = ParseColor(avatar.bodyColor);
     const Color shirt = ParseColor(avatar.shirtColor);
@@ -332,20 +469,51 @@ bool AvatarAssetCache::DrawBaseCharacter(Vector3 feetPosition,
         baseCharacter_.materials[index].maps[MATERIAL_MAP_DIFFUSE].color = tint;
     }
 
+    Model &character = animatedCharacter_.meshCount > 0 ? animatedCharacter_ : baseCharacter_;
+    const BoundingBox &characterBounds = animatedCharacter_.meshCount > 0
+        ? animatedCharacterBounds_ : baseCharacterBounds_;
+    const float characterScale = animatedCharacter_.meshCount > 0
+        ? animatedCharacterScale_ : baseCharacterScale_;
+    if (animatedCharacter_.meshCount > 0) {
+        for (const auto &[name, index] : animatedCharacterMaterials_) {
+            if (index < 0 || index >= animatedCharacter_.materialCount) continue;
+            animatedCharacter_.materials[index].maps[MATERIAL_MAP_DIFFUSE].color =
+                name == "Head1Mtl" ? skin : shirt;
+        }
+
+        const ModelAnimation *activeAnimation = walkAnimations_;
+        int activeAnimationCount = walkAnimationCount_;
+        if (animation == CharacterAnimation::Jump) {
+            activeAnimation = jumpAnimations_;
+            activeAnimationCount = jumpAnimationCount_;
+        }
+        if (activeAnimation && activeAnimationCount > 0) {
+            const ModelAnimation &clip = activeAnimation[0];
+            const float duration = static_cast<float>(std::max(1, clip.frameCount - 1)) *
+                                   kGltfAnimationFrameSeconds;
+            const float cycleTime = std::fmod(std::max(0.0f, animationTimeSeconds), duration);
+            const int frame = animation == CharacterAnimation::Idle
+                ? 0
+                : std::clamp(static_cast<int>(cycleTime / duration * clip.frameCount),
+                             0, clip.frameCount - 1);
+            UpdateModelAnimation(character, clip, frame);
+        }
+    }
+
     rlPushMatrix();
     rlTranslatef(feetPosition.x, feetPosition.y, feetPosition.z);
     // The Blender rig's authored front is +Z; the game camera at yaw 0 faces -Z.
     rlRotatef((PI - facingYaw) * RAD2DEG, 0.0f, 1.0f, 0.0f);
     const Vector3 modelOrigin{
-        -(baseCharacterBounds_.min.x + baseCharacterBounds_.max.x) * 0.5f * baseCharacterScale_,
-        -baseCharacterBounds_.min.y * baseCharacterScale_,
-        -(baseCharacterBounds_.min.z + baseCharacterBounds_.max.z) * 0.5f * baseCharacterScale_};
-    DrawModelEx(baseCharacter_, modelOrigin, Vector3{0.0f, 1.0f, 0.0f}, 0.0f,
-                Vector3{baseCharacterScale_, baseCharacterScale_, baseCharacterScale_}, WHITE);
-    const float modelCenterZ = (baseCharacterBounds_.min.z + baseCharacterBounds_.max.z) * 0.5f;
+        -(characterBounds.min.x + characterBounds.max.x) * 0.5f * characterScale,
+        -characterBounds.min.y * characterScale,
+        -(characterBounds.min.z + characterBounds.max.z) * 0.5f * characterScale};
+    DrawModelEx(character, modelOrigin, Vector3{0.0f, 1.0f, 0.0f}, 0.0f,
+                Vector3{characterScale, characterScale, characterScale}, WHITE);
+    const float modelCenterZ = (characterBounds.min.z + characterBounds.max.z) * 0.5f;
     const float faceFrontZ =
-        (baseCharacterBounds_.max.z - modelCenterZ) * baseCharacterScale_ + 0.002f;
-    Draw(avatar, false, faceFrontZ);
+        (characterBounds.max.z - modelCenterZ) * characterScale + 0.002f;
+    Draw(avatar, animatedCharacter_.meshCount > 0, faceFrontZ);
     rlPopMatrix();
     return true;
 }
@@ -542,6 +710,15 @@ void AvatarAssetCache::Unload() noexcept {
     if (baseCharacter_.meshCount > 0) UnloadModel(baseCharacter_);
     baseCharacter_ = Model{};
     baseCharacterMaterials_.clear();
+    if (animatedCharacter_.meshCount > 0) UnloadModel(animatedCharacter_);
+    animatedCharacter_ = Model{};
+    animatedCharacterMaterials_.clear();
+    if (walkAnimations_) UnloadModelAnimations(walkAnimations_, walkAnimationCount_);
+    walkAnimations_ = nullptr;
+    walkAnimationCount_ = 0;
+    if (jumpAnimations_) UnloadModelAnimations(jumpAnimations_, jumpAnimationCount_);
+    jumpAnimations_ = nullptr;
+    jumpAnimationCount_ = 0;
     baseCharacterLoaded_ = false;
     for (auto& [_, entry] : textures_) if (entry.texture.id) UnloadTexture(entry.texture);
     for (auto& [_, entry] : models_) {

@@ -21,6 +21,11 @@ public:
     JPH::BodyID CreateStaticBox(const JPH::RVec3 &position, const JPH::Vec3 &halfExtents);
     JPH::BodyID CreateDynamicCapsule(const JPH::RVec3 &position, float halfHeightOfCylinder,
                                      float radius, float mass);
+    JPH::BodyID CreateKinematicCapsule(const JPH::RVec3 &position,
+                                       float halfHeightOfCylinder, float radius);
+    void MoveKinematicBody(JPH::BodyID bodyId, const JPH::RVec3 &position,
+                           float deltaSeconds);
+    void DestroyBody(JPH::BodyID bodyId);
 
     JPH::Vec3 GetPosition(JPH::BodyID bodyId);
     JPH::Vec3 GetLinearVelocity(JPH::BodyID bodyId);

@@ -139,7 +139,7 @@ Color AvatarColor(std::string_view value, Color fallback) {
 void DrawAvatar(Vector3 center, const NetworkPlayerSnapshot& appearance, Color identityTint,
                 AvatarAssetCache& avatarAssets,
                 const Model* headSphereModel,
-                float facingYaw = 0.0f) {
+                float facingYaw, bool walking, bool airborne, float animationTimeSeconds) {
     const Color skin = AvatarColor(appearance.bodyColor, identityTint);
     const Color shirt = AvatarColor(appearance.shirtColor, Color{34, 184, 207, 255});
     const Color pants = AvatarColor(appearance.pantsColor, Color{51, 75, 120, 255});
@@ -148,7 +148,11 @@ void DrawAvatar(Vector3 center, const NetworkPlayerSnapshot& appearance, Color i
     // the capsule half-height before drawing the matching proportions.
     constexpr float kCharacterHalfHeight = Player::kHalfHeightOfCylinder + Player::kRadius;
     const Vector3 feetPosition{center.x, center.y - kCharacterHalfHeight, center.z};
-    if (avatarAssets.DrawBaseCharacter(feetPosition, appearance, facingYaw)) return;
+    const auto animation = airborne ? AvatarAssetCache::CharacterAnimation::Jump
+        : walking ? AvatarAssetCache::CharacterAnimation::Walk
+                  : AvatarAssetCache::CharacterAnimation::Idle;
+    if (avatarAssets.DrawBaseCharacter(feetPosition, appearance, facingYaw, animation,
+                                       animationTimeSeconds)) return;
 
     rlPushMatrix();
     rlTranslatef(center.x, center.y - kCharacterHalfHeight, center.z);
@@ -580,6 +584,7 @@ int GameClient::Run() {
         Update(deltaSeconds);
         if (!networkClient_.HasDisconnectNotice()) localScriptRuntime_.Tick(deltaSeconds);
         networkClient_.Poll();
+        if (!networkClient_.HasDisconnectNotice()) SyncRemotePlayers(deltaSeconds);
         // The network notice can arrive after Update() has already run for this
         // frame. Release capture immediately so the disconnect dialog is
         // interactive on its very first rendered frame.
@@ -590,6 +595,26 @@ int GameClient::Run() {
             disconnectUiActive_ = true;
         }
         if (!networkClient_.HasDisconnectNotice()) physicsWorld_.Step(deltaSeconds);
+        const float animationDelta = std::clamp(deltaSeconds, 0.0f, 0.1f);
+        const JPH::Vec3 localVelocity = physicsWorld_.GetLinearVelocity(player_->BodyId());
+        const float localHorizontalSpeedSquared =
+            localVelocity.GetX() * localVelocity.GetX() +
+            localVelocity.GetZ() * localVelocity.GetZ();
+        JPH::RVec3 localGround;
+        const bool localGrounded = localVelocity.GetY() <= 0.35f &&
+            physicsWorld_.RaycastGround(player_->BodyId(),
+                Player::kHalfHeightOfCylinder + Player::kRadius, 0.32f, localGround);
+        const bool walking = localHorizontalSpeedSquared > 0.09f;
+        const bool airborne = !localGrounded;
+        if (!localAnimationInitialized_ || walking != localWalking_ ||
+            airborne != localAirborne_) {
+            localAnimationTimeSeconds_ = 0.0f;
+            localAnimationInitialized_ = true;
+        } else {
+            localAnimationTimeSeconds_ += animationDelta;
+        }
+        localWalking_ = walking;
+        localAirborne_ = airborne;
         const JPH::Vec3 networkPosition = player_->Position();
         networkClient_.SendPlayerPosition(networkPosition.GetX(), networkPosition.GetY(),
                                           networkPosition.GetZ(), playerFacingYaw_);
@@ -726,6 +751,76 @@ void GameClient::UpdateCamera() {
     };
 }
 
+void GameClient::SyncRemotePlayers(float deltaSeconds) {
+    const float remoteBlend =
+        1.0f - std::exp(-18.0f * std::clamp(deltaSeconds, 0.0f, 0.1f));
+    std::vector<std::uint64_t> activeSessions;
+    activeSessions.reserve(networkClient_.Players().size());
+
+    for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
+        if (remote.sessionId == 0 ||
+            (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId()) ||
+            !std::isfinite(remote.x) || !std::isfinite(remote.y) || !std::isfinite(remote.z)) {
+            continue;
+        }
+
+        activeSessions.push_back(remote.sessionId);
+        SmoothedPlayer &smoothed = smoothedPlayers_[remote.sessionId];
+        if (!smoothed.initialized) {
+            smoothed.x = remote.x;
+            smoothed.y = remote.y;
+            smoothed.z = remote.z;
+            smoothed.yaw = remote.yaw;
+            smoothed.initialized = true;
+        } else {
+            smoothed.x = Lerp(smoothed.x, remote.x, remoteBlend);
+            smoothed.y = Lerp(smoothed.y, remote.y, remoteBlend);
+            smoothed.z = Lerp(smoothed.z, remote.z, remoteBlend);
+            smoothed.yaw = LerpAngle(smoothed.yaw, remote.yaw, remoteBlend);
+        }
+
+        const JPH::RVec3 position(smoothed.x, smoothed.y, smoothed.z);
+        const auto body = remotePlayerBodies_.find(remote.sessionId);
+        if (body == remotePlayerBodies_.end()) {
+            const JPH::BodyID bodyId = physicsWorld_.CreateKinematicCapsule(
+                position, Player::kHalfHeightOfCylinder, Player::kRadius);
+            remotePlayerBodies_.emplace(remote.sessionId, bodyId);
+        } else {
+            physicsWorld_.MoveKinematicBody(body->second, position, deltaSeconds);
+        }
+
+        const bool wasWalking = smoothed.walking;
+        const bool wasAirborne = smoothed.airborne;
+        const float animationDelta = std::clamp(deltaSeconds, 0.0f, 0.1f);
+        const JPH::BodyID bodyId = remotePlayerBodies_.at(remote.sessionId);
+        const JPH::Vec3 velocity = physicsWorld_.GetLinearVelocity(bodyId);
+        const float horizontalSpeedSquared =
+            velocity.GetX() * velocity.GetX() + velocity.GetZ() * velocity.GetZ();
+        JPH::RVec3 groundPoint;
+        const bool grounded = velocity.GetY() <= 0.35f &&
+            physicsWorld_.RaycastGround(bodyId,
+                Player::kHalfHeightOfCylinder + Player::kRadius, 0.32f, groundPoint);
+        smoothed.walking = horizontalSpeedSquared > 0.09f;
+        smoothed.airborne = !grounded;
+        if (smoothed.walking != wasWalking || smoothed.airborne != wasAirborne) {
+            smoothed.animationTimeSeconds = 0.0f;
+        } else {
+            smoothed.animationTimeSeconds += animationDelta;
+        }
+    }
+
+    for (auto body = remotePlayerBodies_.begin(); body != remotePlayerBodies_.end();) {
+        if (std::find(activeSessions.begin(), activeSessions.end(), body->first) ==
+            activeSessions.end()) {
+            physicsWorld_.DestroyBody(body->second);
+            smoothedPlayers_.erase(body->first);
+            body = remotePlayerBodies_.erase(body);
+        } else {
+            ++body;
+        }
+    }
+}
+
 void GameClient::DrawFrame() {
     const Vector3 playerPosition = ToRaylibVector(player_->Position());
     std::string localDisplayName = session_.HasToken() ? session_.DisplayName() : "Guest";
@@ -743,12 +838,6 @@ void GameClient::DrawFrame() {
     for (auto it = playerColorSlots_.begin(); it != playerColorSlots_.end();) {
         if (!std::binary_search(activeSessions.begin(), activeSessions.end(), it->first))
             it = playerColorSlots_.erase(it);
-        else
-            ++it;
-    }
-    for (auto it = smoothedPlayers_.begin(); it != smoothedPlayers_.end();) {
-        if (!std::binary_search(activeSessions.begin(), activeSessions.end(), it->first))
-            it = smoothedPlayers_.erase(it);
         else
             ++it;
     }
@@ -836,7 +925,8 @@ void GameClient::DrawFrame() {
 
     const Color characterTint = PlayerColorForSession(networkClient_.SessionId(), playerColorSlots_);
     DrawAvatar(playerPosition, localAppearance, characterTint, avatarAssets_,
-               characterModelsReady_ ? &characterSphereModel_ : nullptr, playerFacingYaw_);
+               characterModelsReady_ ? &characterSphereModel_ : nullptr, playerFacingYaw_,
+               localWalking_, localAirborne_, localAnimationTimeSeconds_);
 
     // Nameplates are textured billboards. Switch back to Raylib's default
     // texture shader after the lit world geometry so their glyph texture is sampled.
@@ -900,26 +990,14 @@ void GameClient::DrawFrame() {
     nameplates.push_back(Nameplate{localDisplayName, localVerified, localNamePosition,
                                    distanceSquaredFromCamera(localNamePosition)});
 
-    const float remoteBlend =
-        1.0f - std::exp(-18.0f * std::clamp(GetFrameTime(), 0.0f, 0.1f));
     for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
         if (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId()) {
             continue;
         }
 
-        SmoothedPlayer &smoothed = smoothedPlayers_[remote.sessionId];
-        if (!smoothed.initialized) {
-            smoothed.x = remote.x;
-            smoothed.y = remote.y;
-            smoothed.z = remote.z;
-            smoothed.yaw = remote.yaw;
-            smoothed.initialized = true;
-        } else {
-            smoothed.x = Lerp(smoothed.x, remote.x, remoteBlend);
-            smoothed.y = Lerp(smoothed.y, remote.y, remoteBlend);
-            smoothed.z = Lerp(smoothed.z, remote.z, remoteBlend);
-            smoothed.yaw = LerpAngle(smoothed.yaw, remote.yaw, remoteBlend);
-        }
+        const auto smoothedIt = smoothedPlayers_.find(remote.sessionId);
+        if (smoothedIt == smoothedPlayers_.end() || !smoothedIt->second.initialized) continue;
+        const SmoothedPlayer &smoothed = smoothedIt->second;
         NetworkPlayerSnapshot renderedRemote = remote;
         renderedRemote.x = smoothed.x;
         renderedRemote.y = smoothed.y;
@@ -930,7 +1008,8 @@ void GameClient::DrawFrame() {
         const Color remoteTint = PlayerColorForSession(remote.sessionId, playerColorSlots_);
         DrawAvatar(remotePosition, renderedRemote, remoteTint, avatarAssets_,
                    characterModelsReady_ ? &characterSphereModel_ : nullptr,
-                   renderedRemote.yaw);
+                   renderedRemote.yaw, smoothed.walking, smoothed.airborne,
+                   smoothed.animationTimeSeconds);
 
         const Vector3 remoteFeet{renderedRemote.x, renderedRemote.y - characterHalfHeight,
                                  renderedRemote.z};

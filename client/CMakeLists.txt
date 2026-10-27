@@ -151,6 +151,40 @@ add_custom_command(
 )
 target_sources(blubox_client PRIVATE "${BLUBOX_CHARACTER_MODEL_HEADER}")
 
+set(BLUBOX_WALK_ANIMATION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxR6WalkAnimation.hpp")
+add_custom_command(
+    OUTPUT "${BLUBOX_WALK_ANIMATION_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/avatars/BluboxR6_Walk.glb"
+            "-DOUTPUT_FILE=${BLUBOX_WALK_ANIMATION_HEADER}"
+            "-DSYMBOL_NAME=kR6WalkAnimationData"
+            "-DSIZE_SYMBOL_NAME=kR6WalkAnimationDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/avatars/BluboxR6_Walk.glb"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+target_sources(blubox_client PRIVATE "${BLUBOX_WALK_ANIMATION_HEADER}")
+
+set(BLUBOX_JUMP_ANIMATION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxR6JumpAnimation.hpp")
+add_custom_command(
+    OUTPUT "${BLUBOX_JUMP_ANIMATION_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/avatars/BluboxR6_Jump.glb"
+            "-DOUTPUT_FILE=${BLUBOX_JUMP_ANIMATION_HEADER}"
+            "-DSYMBOL_NAME=kR6JumpAnimationData"
+            "-DSIZE_SYMBOL_NAME=kR6JumpAnimationDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/avatars/BluboxR6_Jump.glb"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+target_sources(blubox_client PRIVATE "${BLUBOX_JUMP_ANIMATION_HEADER}")
+
 target_include_directories(blubox_client PRIVATE
     src
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
@@ -283,4 +317,3 @@ add_custom_command(TARGET blubox_studio_launcher POST_BUILD
     VERBATIM
 )
 add_dependencies(blubox_launcher blubox_client)
-

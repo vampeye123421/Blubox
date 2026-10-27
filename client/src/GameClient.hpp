@@ -23,6 +23,7 @@ public:
 private:
     void Update(float deltaSeconds);
     void UpdateCamera();
+    void SyncRemotePlayers(float deltaSeconds);
     void DrawFrame();
 
     LaunchOptions options_;
@@ -44,11 +45,15 @@ private:
     Font uiFont_{};
     std::unordered_map<std::string, Texture2D> nameplateTextures_;
     std::unordered_map<std::uint64_t, std::size_t> playerColorSlots_;
+    std::unordered_map<std::uint64_t, JPH::BodyID> remotePlayerBodies_;
     struct SmoothedPlayer {
         float x = 0.0f;
         float y = 0.0f;
         float z = 0.0f;
         float yaw = 0.0f;
+        float animationTimeSeconds = 0.0f;
+        bool walking = false;
+        bool airborne = false;
         bool initialized = false;
     };
     std::unordered_map<std::uint64_t, SmoothedPlayer> smoothedPlayers_;
@@ -60,6 +65,10 @@ private:
     bool skyboxReady_ = false;
     float cameraYaw_ = 0.0f;
     float playerFacingYaw_ = 0.0f;
+    float localAnimationTimeSeconds_ = 0.0f;
+    bool localWalking_ = false;
+    bool localAirborne_ = false;
+    bool localAnimationInitialized_ = false;
     float cameraPitch_ = 0.28f;
     float cameraDistance_ = 7.0f;
     bool mouseCaptured_ = true;

@@ -133,6 +133,40 @@ JPH::BodyID PhysicsWorld::CreateDynamicCapsule(const JPH::RVec3 &position,
     return bodyId;
 }
 
+JPH::BodyID PhysicsWorld::CreateKinematicCapsule(const JPH::RVec3 &position,
+                                                  float halfHeightOfCylinder,
+                                                  float radius) {
+    JPH::Ref<JPH::CapsuleShape> shape = new JPH::CapsuleShape(halfHeightOfCylinder, radius);
+    JPH::BodyCreationSettings settings(shape, position, JPH::Quat::sIdentity(),
+                                       JPH::EMotionType::Kinematic, kMovingLayer);
+    settings.mFriction = 0.0f;
+    settings.mRestitution = 0.0f;
+
+    JPH::BodyInterface &bodyInterface = physicsSystem_->GetBodyInterface();
+    const JPH::BodyID bodyId = bodyInterface.CreateAndAddBody(settings, JPH::EActivation::Activate);
+    if (bodyId.IsInvalid()) {
+        throw std::runtime_error("Jolt could not create a remote player's collision body.");
+    }
+    ownedBodies_.push_back(bodyId);
+    return bodyId;
+}
+
+void PhysicsWorld::MoveKinematicBody(JPH::BodyID bodyId, const JPH::RVec3 &position,
+                                     float deltaSeconds) {
+    const float safeDelta = std::clamp(deltaSeconds, 0.001f, 0.1f);
+    physicsSystem_->GetBodyInterface().MoveKinematic(
+        bodyId, position, JPH::Quat::sIdentity(), safeDelta);
+}
+
+void PhysicsWorld::DestroyBody(JPH::BodyID bodyId) {
+    if (bodyId.IsInvalid()) return;
+
+    JPH::BodyInterface &bodyInterface = physicsSystem_->GetBodyInterface();
+    bodyInterface.RemoveBody(bodyId);
+    bodyInterface.DestroyBody(bodyId);
+    std::erase(ownedBodies_, bodyId);
+}
+
 JPH::Vec3 PhysicsWorld::GetPosition(JPH::BodyID bodyId) {
     const JPH::RVec3 position = physicsSystem_->GetBodyInterface().GetPosition(bodyId);
     return JPH::Vec3(static_cast<float>(position.GetX()),
