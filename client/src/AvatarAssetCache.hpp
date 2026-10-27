@@ -13,7 +13,8 @@ public:
     bool LoadBaseCharacter(const Shader& lightingShader);
     bool DrawBaseCharacter(Vector3 feetPosition, const NetworkPlayerSnapshot& avatar,
                            float facingYaw);
-    void Draw(const NetworkPlayerSnapshot& avatar, bool drawClothingOverlays = true);
+    void Draw(const NetworkPlayerSnapshot& avatar, bool drawClothingOverlays = true,
+              float faceFrontZ = 0.325f);
     void DrawGroundShadow(Vector3 groundPoint, Vector3 feetPosition,
                           const NetworkPlayerSnapshot& avatar, float facingYaw,
                           Vector3 sunToLight);

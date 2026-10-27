@@ -342,7 +342,10 @@ bool AvatarAssetCache::DrawBaseCharacter(Vector3 feetPosition,
         -(baseCharacterBounds_.min.z + baseCharacterBounds_.max.z) * 0.5f * baseCharacterScale_};
     DrawModelEx(baseCharacter_, modelOrigin, Vector3{0.0f, 1.0f, 0.0f}, 0.0f,
                 Vector3{baseCharacterScale_, baseCharacterScale_, baseCharacterScale_}, WHITE);
-    Draw(avatar, false);
+    const float modelCenterZ = (baseCharacterBounds_.min.z + baseCharacterBounds_.max.z) * 0.5f;
+    const float faceFrontZ =
+        (baseCharacterBounds_.max.z - modelCenterZ) * baseCharacterScale_ + 0.002f;
+    Draw(avatar, false, faceFrontZ);
     rlPopMatrix();
     return true;
 }
@@ -440,7 +443,8 @@ AvatarAssetCache::ModelEntry& AvatarAssetCache::model(const std::string& url, co
     return entry;
 }
 
-void AvatarAssetCache::Draw(const NetworkPlayerSnapshot& avatar, bool drawClothingOverlays) {
+void AvatarAssetCache::Draw(const NetworkPlayerSnapshot& avatar, bool drawClothingOverlays,
+                            float faceFrontZ) {
     Texture2D shirtTexture{};
     Texture2D pantsTexture{};
     Texture2D faceTexture{};
@@ -462,7 +466,7 @@ void AvatarAssetCache::Draw(const NetworkPlayerSnapshot& avatar, bool drawClothi
         DrawOverlay(pantsTexture, Rectangle{347, 256, 58, 128}, 0.23f, 0.43f, 0.31f, 0.72f, 0.171f, ParseColor(avatar.pantsColor));
     }
     if (faceTexture.id != 0) {
-        DrawOverlay(faceTexture, Rectangle{0, 0, static_cast<float>(faceTexture.width), static_cast<float>(faceTexture.height)}, 0.0f, 1.93f, 0.35f, 0.35f, 0.325f, WHITE);
+        DrawOverlay(faceTexture, Rectangle{0, 0, static_cast<float>(faceTexture.width), static_cast<float>(faceTexture.height)}, 0.0f, 1.93f, 0.35f, 0.35f, faceFrontZ, WHITE);
     }
     for (const auto& accessory : avatar.accessoryAssets) {
         ModelEntry& entry = model(accessory.assetUrl, accessory.textureAssetUrl);

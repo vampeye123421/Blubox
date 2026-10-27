@@ -8,7 +8,7 @@
 namespace {
 
 constexpr float kMoveSpeed = 7.0f;
-constexpr float kHorizontalAcceleration = 20.0f;
+constexpr float kHorizontalAcceleration = 10.0f;
 constexpr float kJumpBufferDuration = 0.18f;
 constexpr float kCoyoteDuration = 0.12f;
 constexpr float kGroundTolerance = 0.24f;

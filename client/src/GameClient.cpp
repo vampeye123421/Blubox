@@ -122,6 +122,10 @@ float SmoothStep(float edge0, float edge1, float value) {
 
 float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 
+float LerpAngle(float from, float to, float t) {
+    return from + std::remainder(to - from, 2.0f * PI) * t;
+}
+
 Color AvatarColor(std::string_view value, Color fallback) {
     if (value.size() != 7 || value.front() != '#') return fallback;
     unsigned int rgb = 0;
@@ -403,6 +407,8 @@ int GameClient::Run() {
     if (!IsWindowReady()) {
         throw std::runtime_error("Blubox Client couldn't create its OpenGL window. Update your graphics driver and try again.");
     }
+    ClearWindowState(FLAG_WINDOW_UNDECORATED);
+    SetWindowState(FLAG_WINDOW_RESIZABLE);
     Image appIcon = LoadImageFromMemory(".png", blubox::kBrandIconData, blubox::kBrandIconDataSize);
     if (appIcon.data != nullptr) {
         ImageFormat(&appIcon, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
@@ -693,12 +699,15 @@ void GameClient::Update(float deltaSeconds) {
     if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) rightInput -= 1.0f;
     const float inputLength = std::sqrt(forwardInput * forwardInput + rightInput * rightInput);
 
+    float targetFacingYaw = playerFacingYaw_;
     if (shiftLockEnabled_) {
-        playerFacingYaw_ = cameraYaw_;
+        targetFacingYaw = cameraYaw_;
     } else if (inputLength > 0.01f) {
         const float moveAngle = std::atan2(rightInput, forwardInput);
-        playerFacingYaw_ = cameraYaw_ + moveAngle;
+        targetFacingYaw = cameraYaw_ + moveAngle;
     }
+    const float facingBlend = 1.0f - std::exp(-14.0f * std::max(0.0f, deltaSeconds));
+    playerFacingYaw_ = LerpAngle(playerFacingYaw_, targetFacingYaw, facingBlend);
 
     player_->Update(deltaSeconds, cameraYaw_);
 }
@@ -891,17 +900,40 @@ void GameClient::DrawFrame() {
     nameplates.push_back(Nameplate{localDisplayName, localVerified, localNamePosition,
                                    distanceSquaredFromCamera(localNamePosition)});
 
+    const float remoteBlend =
+        1.0f - std::exp(-18.0f * std::clamp(GetFrameTime(), 0.0f, 0.1f));
     for (const NetworkPlayerSnapshot &remote : networkClient_.Players()) {
         if (networkClient_.SessionId() != 0 && remote.sessionId == networkClient_.SessionId()) {
             continue;
         }
 
-        const Vector3 remotePosition{remote.x, remote.y, remote.z};
-        const Color remoteTint = PlayerColorForSession(remote.sessionId, playerColorSlots_);
-        DrawAvatar(remotePosition, remote, remoteTint, avatarAssets_,
-                   characterModelsReady_ ? &characterSphereModel_ : nullptr, remote.yaw);
+        SmoothedPlayer &smoothed = smoothedPlayers_[remote.sessionId];
+        if (!smoothed.initialized) {
+            smoothed.x = remote.x;
+            smoothed.y = remote.y;
+            smoothed.z = remote.z;
+            smoothed.yaw = remote.yaw;
+            smoothed.initialized = true;
+        } else {
+            smoothed.x = Lerp(smoothed.x, remote.x, remoteBlend);
+            smoothed.y = Lerp(smoothed.y, remote.y, remoteBlend);
+            smoothed.z = Lerp(smoothed.z, remote.z, remoteBlend);
+            smoothed.yaw = LerpAngle(smoothed.yaw, remote.yaw, remoteBlend);
+        }
+        NetworkPlayerSnapshot renderedRemote = remote;
+        renderedRemote.x = smoothed.x;
+        renderedRemote.y = smoothed.y;
+        renderedRemote.z = smoothed.z;
+        renderedRemote.yaw = smoothed.yaw;
 
-        const Vector3 remoteFeet{remote.x, remote.y - characterHalfHeight, remote.z};
+        const Vector3 remotePosition{renderedRemote.x, renderedRemote.y, renderedRemote.z};
+        const Color remoteTint = PlayerColorForSession(remote.sessionId, playerColorSlots_);
+        DrawAvatar(remotePosition, renderedRemote, remoteTint, avatarAssets_,
+                   characterModelsReady_ ? &characterSphereModel_ : nullptr,
+                   renderedRemote.yaw);
+
+        const Vector3 remoteFeet{renderedRemote.x, renderedRemote.y - characterHalfHeight,
+                                 renderedRemote.z};
         JPH::RVec3 remoteGround;
         if (physicsWorld_.RaycastGroundAt(JPH::RVec3(remoteFeet.x, remoteFeet.y, remoteFeet.z),
                                           80.0f, remoteGround)) {
@@ -909,10 +941,12 @@ void GameClient::DrawFrame() {
                 Vector3{static_cast<float>(remoteGround.GetX()),
                         static_cast<float>(remoteGround.GetY()),
                         static_cast<float>(remoteGround.GetZ())},
-                remoteFeet, remote, 0.0f, NormalizeVector(kSunToLight));
+                remoteFeet, renderedRemote, renderedRemote.yaw,
+                NormalizeVector(kSunToLight));
         }
 
-        const Vector3 labelPosition{remote.x, remote.y + 1.62f, remote.z};
+        const Vector3 labelPosition{renderedRemote.x, renderedRemote.y + 1.62f,
+                                    renderedRemote.z};
         nameplates.push_back(Nameplate{remote.displayName, remote.isVerified, labelPosition,
                                        distanceSquaredFromCamera(labelPosition)});
     }
