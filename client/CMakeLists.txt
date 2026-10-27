@@ -198,9 +198,9 @@ else()
     target_compile_options(blubox_client PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 if(WIN32 AND MINGW)
-    # Jolt propagates AVX2 flags to consumers. Keep Raylib's by-value Camera
-    # copy inside a small non-AVX wrapper to avoid MinGW stack-alignment faults.
-    set_source_files_properties(src/RaylibCompat.cpp PROPERTIES
+    # Jolt propagates AVX2 flags to consumers. Raylib's by-value Matrix and
+    # Camera operations can otherwise fault on MinGW stack alignment.
+    set_source_files_properties(src/RaylibCompat.cpp src/AvatarAssetCache.cpp PROPERTIES
         COMPILE_OPTIONS "-mno-avx;-mno-avx2;-mno-fma;-mno-f16c"
     )
 endif()
