@@ -1385,7 +1385,17 @@ void AvatarAssetCache::Draw(const NetworkPlayerSnapshot& avatar, bool drawClothi
             rlPushMatrix();
             rlMultMatrixf(MatrixToFloat(*faceTransform));
         }
+        const unsigned int restoreShaderId = lightingShader_.id != 0
+            ? lightingShader_.id
+            : rlGetShaderIdDefault();
+        int *restoreShaderLocations = lightingShader_.id != 0
+            ? lightingShader_.locs
+            : rlGetShaderLocsDefault();
+        // Match the website preview's unlit face material instead of washing
+        // decal colors through the world-lighting shader.
+        rlSetShader(rlGetShaderIdDefault(), rlGetShaderLocsDefault());
         DrawCurvedOverlay(faceTexture, 0.0f, 1.93f, 0.35f, 0.35f, faceFrontZ, WHITE);
+        rlSetShader(restoreShaderId, restoreShaderLocations);
         if (faceTransform) rlPopMatrix();
     }
     for (const auto& accessory : avatar.accessoryAssets) {
