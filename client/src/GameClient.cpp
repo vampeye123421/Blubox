@@ -423,8 +423,7 @@ int GameClient::Run() {
     if (options_.protocolLaunch.has_value() && options_.protocolLaunch->action == "join") {
         networkClient_.Connect(session_);
     } else {
-        // Always attempt connection to main multiplayer server
-        networkClient_.Connect(session_);
+        TraceLog(LOG_INFO, "GameClient: starting a local guest session without server connection.");
     }
 
     bool publishedWorldLoaded = false;

@@ -60,7 +60,7 @@ For a valid `join` URI, the client opens an asynchronous ENet UDP connection to 
 Physics uses a fixed 120 Hz timestep accumulator, with a limit on catch-up after pauses or dragged windows. The graphics frame rate targets 180 FPS, and the window can be resized.
 Remote players have kinematic capsule colliders in the local physics world, so the local player cannot walk through their avatars. Their collider positions follow the same smoothed network snapshots as their rendered avatars.
 
-The R6 character uses embedded glTF 2.0 binary animations from `assets/avatars/BluboxR6_Walk.glb` and `assets/avatars/BluboxR6_Jump.glb`. Walking plays while a player moves on the ground, the jump clip loops while airborne (including falling), and idle holds the first walk frame. Local and remote players use the same animation state logic.
+The visible R6 character is embedded from `assets/avatars/BluboxR6_Studio.glb`. Because this model has no skeleton or skin weights, the client animates its arm and leg meshes procedurally for walking and jumping rather than applying skeletal clips to an incompatible mesh. The `BluboxR6_Walk.glb` and `BluboxR6_Jump.glb` files are not used by this static model path; skeletal playback requires a skinned export of the visible character.
 
 ## Dedicated server
 

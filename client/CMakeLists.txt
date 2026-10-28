@@ -63,7 +63,29 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+FetchContent_Declare(
+    ufbx
+    GIT_REPOSITORY https://github.com/ufbx/ufbx.git
+    GIT_TAG v0.23.1
+    GIT_SHALLOW TRUE
+)
+
 FetchContent_MakeAvailable(raylib JoltPhysics enet nlohmann_json luau)
+
+FetchContent_GetProperties(ufbx)
+if(NOT ufbx_POPULATED)
+    if(POLICY CMP0169)
+        cmake_policy(PUSH)
+        cmake_policy(SET CMP0169 OLD)
+        FetchContent_Populate(ufbx)
+        cmake_policy(POP)
+    else()
+        FetchContent_Populate(ufbx)
+    endif()
+endif()
+add_library(ufbx STATIC "${ufbx_SOURCE_DIR}/ufbx.c")
+target_include_directories(ufbx PUBLIC "${ufbx_SOURCE_DIR}")
+set_target_properties(ufbx PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
 
 add_executable(blubox_client WIN32
     src/ClientMain.cpp
@@ -132,8 +154,8 @@ add_custom_command(
 )
 target_sources(blubox_client PRIVATE "${BLUBOX_VERIFIED_BADGE_HEADER}")
 
-# The temporary Blubox R6 avatar ships inside the client executable, so avatar
-# rendering does not depend on a loose asset file or the launcher's working dir.
+# The Studio character geometry is intentionally kept as the visible model.
+# It is animated procedurally because it has no skin or bone hierarchy.
 set(BLUBOX_CHARACTER_MODEL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxR6Character.hpp")
 add_custom_command(
     OUTPUT "${BLUBOX_CHARACTER_MODEL_HEADER}"
@@ -190,7 +212,7 @@ target_include_directories(blubox_client PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     ${enet_SOURCE_DIR}/include
 )
-target_link_libraries(blubox_client PRIVATE raylib Jolt enet nlohmann_json::nlohmann_json Luau.Compiler Luau.VM)
+target_link_libraries(blubox_client PRIVATE raylib Jolt enet nlohmann_json::nlohmann_json Luau.Compiler Luau.VM ufbx)
 
 if(MSVC)
     target_compile_options(blubox_client PRIVATE /W4 /permissive-)

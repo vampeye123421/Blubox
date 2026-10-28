@@ -4,6 +4,7 @@
 #include "BluboxR6JumpAnimation.hpp"
 #include "BluboxR6WalkAnimation.hpp"
 #include <nlohmann/json.hpp>
+#include <ufbx.h>
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
@@ -20,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -51,7 +53,7 @@ constexpr std::size_t kMaxTextureBytes = 5u * 1024u * 1024u;
 constexpr std::size_t kMaxModelBytes = 30u * 1024u * 1024u;
 constexpr std::string_view kAssetPath = "/storage/v1/object/public/marketplace-assets/";
 constexpr float kAvatarTargetHeight = 2.24f;
-constexpr float kGltfAnimationFrameSeconds = 0.017f;
+constexpr float kAnimationFramesPerSecond = 60.0f;
 
 #if defined(_WIN32)
 std::wstring ToWide(std::string_view text) {
@@ -146,6 +148,98 @@ Color ParseColor(std::string_view value) {
         rgb = (rgb << 4) | digit;
     }
     return Color{static_cast<unsigned char>(rgb >> 16), static_cast<unsigned char>(rgb >> 8), static_cast<unsigned char>(rgb), 255};
+}
+
+void ApplyRigidPartAnimation(
+    Model &model, const std::vector<std::vector<float>> &baseVertices,
+    const std::vector<std::vector<float>> &baseNormals,
+    const std::vector<int> &partByMesh, const std::vector<Vector3> &pivotByMesh,
+    AvatarAssetCache::CharacterAnimation animation, float animationTimeSeconds,
+    bool &poseApplied) {
+    const auto uploadMesh = [](Mesh &mesh) {
+        if (mesh.vboId[0] && mesh.vertices) {
+            rlUpdateVertexBuffer(mesh.vboId[0], mesh.vertices,
+                                 mesh.vertexCount * 3 * static_cast<int>(sizeof(float)), 0);
+        }
+        if (mesh.vboId[2] && mesh.normals) {
+            rlUpdateVertexBuffer(mesh.vboId[2], mesh.normals,
+                                 mesh.vertexCount * 3 * static_cast<int>(sizeof(float)), 0);
+        }
+    };
+
+    if (animation == AvatarAssetCache::CharacterAnimation::Idle) {
+        if (!poseApplied) return;
+        for (int meshIndex = 0; meshIndex < model.meshCount; ++meshIndex) {
+            Mesh &mesh = model.meshes[meshIndex];
+            const auto index = static_cast<std::size_t>(meshIndex);
+            if (mesh.vertices && index < baseVertices.size() &&
+                baseVertices[index].size() == static_cast<std::size_t>(mesh.vertexCount) * 3) {
+                std::copy(baseVertices[index].begin(), baseVertices[index].end(), mesh.vertices);
+            }
+            if (mesh.normals && index < baseNormals.size() &&
+                baseNormals[index].size() == static_cast<std::size_t>(mesh.vertexCount) * 3) {
+                std::copy(baseNormals[index].begin(), baseNormals[index].end(), mesh.normals);
+            }
+            if (index < partByMesh.size() && partByMesh[index] != 0) uploadMesh(mesh);
+        }
+        poseApplied = false;
+        return;
+    }
+
+    const float phase = std::max(0.0f, animationTimeSeconds) * 2.0f * PI * 1.6f;
+    const float stride = std::sin(phase);
+    for (int meshIndex = 0; meshIndex < model.meshCount; ++meshIndex) {
+        const auto index = static_cast<std::size_t>(meshIndex);
+        if (index >= partByMesh.size() || partByMesh[index] == 0 ||
+            index >= baseVertices.size() || !model.meshes[meshIndex].vertices) continue;
+
+        Mesh &mesh = model.meshes[meshIndex];
+        const std::vector<float> &source = baseVertices[index];
+        if (source.size() != static_cast<std::size_t>(mesh.vertexCount) * 3) continue;
+        const std::vector<float> *sourceNormals = index < baseNormals.size()
+            ? &baseNormals[index]
+            : nullptr;
+        const bool hasSourceNormals = sourceNormals &&
+            sourceNormals->size() == static_cast<std::size_t>(mesh.vertexCount) * 3;
+        const Vector3 pivot = pivotByMesh[index];
+        const int part = partByMesh[index];
+
+        for (int vertexIndex = 0; vertexIndex < mesh.vertexCount; ++vertexIndex) {
+            const int offset = vertexIndex * 3;
+            const float x = source[static_cast<std::size_t>(offset)];
+            const float y = source[static_cast<std::size_t>(offset + 1)];
+            const float z = source[static_cast<std::size_t>(offset + 2)];
+            const bool leftSide = x < pivot.x;
+            float angle = 0.0f;
+            if (animation == AvatarAssetCache::CharacterAnimation::Jump) {
+                angle = part == 1 ? -0.42f : 0.16f;
+            } else if (part == 1) {
+                angle = (leftSide ? -1.0f : 1.0f) * stride * 0.28f;
+            } else {
+                angle = (leftSide ? 1.0f : -1.0f) * stride * 0.38f;
+            }
+
+            const float cosine = std::cos(angle);
+            const float sine = std::sin(angle);
+            const float relativeY = y - pivot.y;
+            const float relativeZ = z - pivot.z;
+            mesh.vertices[offset] = x;
+            mesh.vertices[offset + 1] =
+                pivot.y + relativeY * cosine - relativeZ * sine;
+            mesh.vertices[offset + 2] =
+                pivot.z + relativeY * sine + relativeZ * cosine;
+
+            if (mesh.normals && hasSourceNormals) {
+                const float normalY = (*sourceNormals)[static_cast<std::size_t>(offset + 1)];
+                const float normalZ = (*sourceNormals)[static_cast<std::size_t>(offset + 2)];
+                mesh.normals[offset] = (*sourceNormals)[static_cast<std::size_t>(offset)];
+                mesh.normals[offset + 1] = normalY * cosine - normalZ * sine;
+                mesh.normals[offset + 2] = normalY * sine + normalZ * cosine;
+            }
+        }
+        uploadMesh(mesh);
+    }
+    poseApplied = true;
 }
 
 struct AccessoryFit {
@@ -291,7 +385,8 @@ void DrawCurvedOverlay(Texture2D texture, float centerX, float centerY,
     rlSetTexture(0);
 }
 
-bool ParseGlbJson(const unsigned char *data, std::size_t size, nlohmann::json &output) {
+[[maybe_unused]] bool ParseGlbJson(const unsigned char *data, std::size_t size,
+                                   nlohmann::json &output) {
     if (data == nullptr || size < 20 || data[0] != 'g' || data[1] != 'l' ||
         data[2] != 'T' || data[3] != 'F') return false;
     const std::uint32_t jsonLength =
@@ -330,8 +425,9 @@ bool ReadGltfVector(const nlohmann::json &node, const char *key,
     return true;
 }
 
-bool GltfNodeWorldTransforms(const nlohmann::json &gltf, std::vector<Matrix> &worldTransforms,
-                             std::vector<Matrix> &meshWorldTransforms) {
+[[maybe_unused]] bool GltfNodeWorldTransforms(
+    const nlohmann::json &gltf, std::vector<Matrix> &worldTransforms,
+    std::vector<Matrix> &meshWorldTransforms) {
     if (!gltf.contains("nodes") || !gltf["nodes"].is_array()) return false;
     const auto &nodes = gltf["nodes"];
     std::vector<int> parents(nodes.size(), -1);
@@ -423,7 +519,214 @@ bool GltfNodeWorldTransforms(const nlohmann::json &gltf, std::vector<Matrix> &wo
     return !meshWorldTransforms.empty();
 }
 
-bool BuildAnimationVertexMappings(
+std::string NormalizeBoneName(std::string value) {
+    std::string normalized;
+    normalized.reserve(value.size());
+    for (const unsigned char ch : value) {
+        if (std::isalnum(ch)) {
+            normalized.push_back(static_cast<char>(std::tolower(ch)));
+        }
+    }
+    if (normalized == "rootjoint") return "root";
+    if (normalized == "headend") return "head";
+    if (normalized == "leftarmend" || normalized == "leftarm") return "leftarm";
+    if (normalized == "rightarmend" || normalized == "rightarm") return "rightarm";
+    if (normalized == "leftlegend" || normalized == "leftleg") return "leftleg";
+    if (normalized == "rightlegend" || normalized == "rightleg") return "rightleg";
+    if (normalized == "torso") return "torso";
+    if (normalized == "pelvis" || normalized == "hips") return "hips";
+    if (normalized == "neck") return "neck";
+    if (normalized == "spine" || normalized == "spinebase") return "spine";
+    if (normalized == "upperchest" || normalized == "chest") return "chest";
+    if (normalized == "shoulderleft") return "leftshoulder";
+    if (normalized == "shoulderright") return "rightshoulder";
+    return normalized;
+}
+
+bool ResolveAnimationBone(const ufbx_scene *scene, const std::string &rigBoneName,
+                          const char *clipName, const ufbx_node **outNode) {
+    if (!scene || !outNode) return false;
+    const std::string rigNormalized = NormalizeBoneName(rigBoneName);
+    const auto match = [&](const std::string &candidate) {
+        if (candidate.empty()) return false;
+        const std::string normalized = NormalizeBoneName(candidate);
+        if (normalized == rigNormalized) return true;
+        const std::string candidateWithoutSuffix = normalized.substr(0, normalized.find_last_not_of("end") + 1);
+        if (!candidateWithoutSuffix.empty() && candidateWithoutSuffix == rigNormalized) return true;
+        return false;
+    };
+
+    for (std::size_t i = 0; i < scene->nodes.count; ++i) {
+        const ufbx_node *node = scene->nodes.data[i];
+        if (!node || !node->name.data) continue;
+        const std::string nodeName(node->name.data, node->name.length);
+        if (match(nodeName)) {
+            *outNode = node;
+            return true;
+        }
+    }
+
+    if (const ufbx_node *node = ufbx_find_node(scene, rigBoneName.c_str())) {
+        *outNode = node;
+        return true;
+    }
+
+    for (std::size_t i = 0; i < scene->nodes.count; ++i) {
+        const ufbx_node *node = scene->nodes.data[i];
+        if (!node || !node->name.data) continue;
+        const std::string nodeName(node->name.data, node->name.length);
+        const std::string nodeNormalized = NormalizeBoneName(nodeName);
+        if (nodeNormalized == rigNormalized ||
+            (nodeNormalized.find(rigNormalized) != std::string::npos &&
+             nodeNormalized.size() > rigNormalized.size()) ||
+            (rigNormalized.find(nodeNormalized) != std::string::npos &&
+             rigNormalized.size() > nodeNormalized.size())) {
+            *outNode = node;
+            return true;
+        }
+    }
+
+    TraceLog(LOG_WARNING, "The %s FBX animation is missing the rig bone '%s'.",
+             clipName, rigBoneName.c_str());
+    return false;
+}
+
+[[maybe_unused]] bool LoadFbxAnimation(const unsigned char *data, std::size_t size,
+                                       const Model &rig, const char *clipName,
+                                       ModelAnimation **animations, int *animationCount) {
+    *animations = nullptr;
+    *animationCount = 0;
+    if (!data || size == 0 || rig.boneCount <= 0 || !rig.bones) return false;
+
+    ufbx_load_opts loadOptions{};
+    loadOptions.file_format = UFBX_FILE_FORMAT_FBX;
+    loadOptions.target_axes = ufbx_axes_right_handed_y_up;
+    ufbx_error error{};
+    ufbx_scene *scene = ufbx_load_memory(data, size, &loadOptions, &error);
+    if (!scene) {
+        const char *description = error.description.data ? error.description.data : "unknown FBX error";
+        const int descriptionLength = static_cast<int>(error.description.length);
+        TraceLog(LOG_WARNING, "Could not load the %s FBX animation: %.*s",
+                 clipName, descriptionLength, description);
+        return false;
+    }
+
+    const auto fail = [&](const char *reason) {
+        TraceLog(LOG_WARNING, "Could not load the %s FBX animation: %s", clipName, reason);
+        ufbx_free_scene(scene);
+        return false;
+    };
+    if (scene->anim_curves.count == 0) {
+        return fail("the file contains no keyed animation curves");
+    }
+    const ufbx_anim *sourceAnimation = scene->anim;
+    if (scene->anim_stacks.count > 0 && scene->anim_stacks.data[0] &&
+        scene->anim_stacks.data[0]->anim) {
+        sourceAnimation = scene->anim_stacks.data[0]->anim;
+    }
+    if (!sourceAnimation) return fail("no animation data was found");
+    const double startTime = sourceAnimation->time_begin;
+    const double endTime = sourceAnimation->time_end;
+    const double duration = endTime - startTime;
+    if (!std::isfinite(startTime) || !std::isfinite(endTime) || duration <= 0.001) {
+        return fail("the animation has no usable duration");
+    }
+    const double sampleCount = std::ceil(duration * kAnimationFramesPerSecond) + 1.0;
+    constexpr int kMaximumAnimationFrames = 2400;
+    if (sampleCount < 2.0 || sampleCount > kMaximumAnimationFrames) {
+        return fail("the animation duration is outside the supported range");
+    }
+
+    std::vector<const ufbx_node *> boneNodes;
+    boneNodes.reserve(static_cast<std::size_t>(rig.boneCount));
+    for (int boneIndex = 0; boneIndex < rig.boneCount; ++boneIndex) {
+        const ufbx_node *node = nullptr;
+        if (!ResolveAnimationBone(scene, rig.bones[boneIndex].name, clipName, &node)) {
+            ufbx_free_scene(scene);
+            return false;
+        }
+        boneNodes.push_back(node);
+    }
+
+    auto *result = static_cast<ModelAnimation *>(MemAlloc(sizeof(ModelAnimation)));
+    if (!result) return fail("not enough memory for the animation");
+    *result = ModelAnimation{};
+    result->boneCount = rig.boneCount;
+    result->frameCount = static_cast<int>(sampleCount);
+    result->bones = static_cast<BoneInfo *>(MemAlloc(
+        sizeof(BoneInfo) * static_cast<std::size_t>(result->boneCount)));
+    result->framePoses = static_cast<Transform **>(MemAlloc(
+        sizeof(Transform *) * static_cast<std::size_t>(result->frameCount)));
+    if (!result->bones || !result->framePoses) {
+        result->frameCount = 0;
+        UnloadModelAnimation(*result);
+        MemFree(result);
+        ufbx_free_scene(scene);
+        return false;
+    }
+    std::memcpy(result->bones, rig.bones,
+                sizeof(BoneInfo) * static_cast<std::size_t>(result->boneCount));
+    std::fill(result->framePoses, result->framePoses + result->frameCount, nullptr);
+    std::snprintf(result->name, sizeof(result->name), "%s", clipName);
+
+    for (int frameIndex = 0; frameIndex < result->frameCount; ++frameIndex) {
+        auto *pose = static_cast<Transform *>(MemAlloc(
+            sizeof(Transform) * static_cast<std::size_t>(result->boneCount)));
+        if (!pose) {
+            result->frameCount = frameIndex;
+            UnloadModelAnimation(*result);
+            MemFree(result);
+            ufbx_free_scene(scene);
+            return false;
+        }
+        result->framePoses[frameIndex] = pose;
+        const double frameTime = startTime +
+            duration * static_cast<double>(frameIndex) / (result->frameCount - 1);
+        for (int boneIndex = 0; boneIndex < result->boneCount; ++boneIndex) {
+            const ufbx_transform transform =
+                ufbx_evaluate_transform(sourceAnimation, boneNodes[boneIndex], frameTime);
+            const Transform converted{
+                Vector3{static_cast<float>(transform.translation.x),
+                        static_cast<float>(transform.translation.y),
+                        static_cast<float>(transform.translation.z)},
+                Quaternion{static_cast<float>(transform.rotation.x),
+                           static_cast<float>(transform.rotation.y),
+                           static_cast<float>(transform.rotation.z),
+                           static_cast<float>(transform.rotation.w)},
+                Vector3{static_cast<float>(transform.scale.x),
+                        static_cast<float>(transform.scale.y),
+                        static_cast<float>(transform.scale.z)}};
+            if (!std::isfinite(converted.translation.x) ||
+                !std::isfinite(converted.translation.y) ||
+                !std::isfinite(converted.translation.z) ||
+                !std::isfinite(converted.rotation.x) ||
+                !std::isfinite(converted.rotation.y) ||
+                !std::isfinite(converted.rotation.z) ||
+                !std::isfinite(converted.rotation.w) ||
+                !std::isfinite(converted.scale.x) ||
+                !std::isfinite(converted.scale.y) ||
+                !std::isfinite(converted.scale.z)) {
+                result->frameCount = frameIndex + 1;
+                UnloadModelAnimation(*result);
+                MemFree(result);
+                ufbx_free_scene(scene);
+                TraceLog(LOG_WARNING, "The %s FBX animation contains a non-finite bone pose.",
+                         clipName);
+                return false;
+            }
+            pose[boneIndex] = converted;
+        }
+    }
+
+    ufbx_free_scene(scene);
+    *animations = result;
+    *animationCount = 1;
+    TraceLog(LOG_INFO, "Loaded %s FBX animation (%d bones, %d frames, %.2f seconds).",
+             clipName, result->boneCount, result->frameCount, duration);
+    return true;
+}
+
+[[maybe_unused]] bool BuildAnimationVertexMappings(
     const Model &character, const Model &animationSource,
     const std::vector<Matrix> &sourceMeshWorldTransforms,
     std::vector<Matrix> &baseToAnimationSpace,
@@ -544,13 +847,13 @@ bool BuildAnimationVertexMappings(
     return true;
 }
 
-bool UpdateRetargetedAnimation(Model character, Model animationSource,
-                               ModelAnimation animation, int frame,
-                               const BoundingBox &bindBounds,
-                               const std::vector<Matrix> &baseToAnimationSpace,
-                               const std::vector<Matrix> &animationToBaseSpace,
-                               const std::vector<int> &animationSourceMeshIndices,
-                               const std::vector<std::vector<int>> &animationSourceVertexIndices) {
+[[maybe_unused]] bool UpdateRetargetedAnimation(
+    Model character, Model animationSource, ModelAnimation animation, int frame,
+    [[maybe_unused]] const BoundingBox &bindBounds,
+    const std::vector<Matrix> &baseToAnimationSpace,
+    const std::vector<Matrix> &animationToBaseSpace,
+    const std::vector<int> &animationSourceMeshIndices,
+    const std::vector<std::vector<int>> &animationSourceVertexIndices) {
     const auto uploadMesh = [](Mesh &mesh) {
         if (mesh.vboId[0] && mesh.animVertices) {
             rlUpdateVertexBuffer(mesh.vboId[0], mesh.animVertices,
@@ -584,11 +887,6 @@ bool UpdateRetargetedAnimation(Model character, Model animationSource,
         return false;
     }
     UpdateModelAnimation(animationSource, animation, frame);
-    const float margin = (bindBounds.max.y - bindBounds.min.y) * 0.5f;
-    const Vector3 minAllowed{bindBounds.min.x - margin, bindBounds.min.y - margin,
-                             bindBounds.min.z - margin};
-    const Vector3 maxAllowed{bindBounds.max.x + margin, bindBounds.max.y + margin,
-                             bindBounds.max.z + margin};
     bool validPose = true;
     for (int meshIndex = 0; meshIndex < character.meshCount; ++meshIndex) {
         Mesh &mesh = character.meshes[meshIndex];
@@ -626,10 +924,7 @@ bool UpdateRetargetedAnimation(Model character, Model animationSource,
                 sourceMesh.animVertices[sourceVertexIndex * 3 + 2]};
             const Vector3 animatedPosition = Vector3Transform(sourcePosition, fromAnimation);
             if (!std::isfinite(animatedPosition.x) || !std::isfinite(animatedPosition.y) ||
-                !std::isfinite(animatedPosition.z) || animatedPosition.x < minAllowed.x ||
-                animatedPosition.y < minAllowed.y || animatedPosition.z < minAllowed.z ||
-                animatedPosition.x > maxAllowed.x || animatedPosition.y > maxAllowed.y ||
-                animatedPosition.z > maxAllowed.z) {
+                !std::isfinite(animatedPosition.z)) {
                 validPose = false;
             }
             mesh.animVertices[vertexIndex * 3] = animatedPosition.x;
@@ -737,106 +1032,138 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
         return false;
     }
     baseCharacterScale_ = kAvatarTargetHeight / height;
+    baseCharacterVertices_.clear();
+    baseCharacterNormals_.clear();
+    proceduralPartByMesh_.assign(static_cast<std::size_t>(baseCharacter_.meshCount), 0);
+    proceduralPivotByMesh_.assign(static_cast<std::size_t>(baseCharacter_.meshCount), Vector3{});
+    baseCharacterVertices_.resize(static_cast<std::size_t>(baseCharacter_.meshCount));
+    baseCharacterNormals_.resize(static_cast<std::size_t>(baseCharacter_.meshCount));
+
+    int armMeshes = 0;
+    int legMeshes = 0;
+    const float characterWidth = baseCharacterBounds_.max.x - baseCharacterBounds_.min.x;
+    const float characterCenterX =
+        (baseCharacterBounds_.min.x + baseCharacterBounds_.max.x) * 0.5f;
+    for (int meshIndex = 0; meshIndex < baseCharacter_.meshCount; ++meshIndex) {
+        Mesh &mesh = baseCharacter_.meshes[meshIndex];
+        const auto index = static_cast<std::size_t>(meshIndex);
+        const std::size_t vertexDataSize = static_cast<std::size_t>(mesh.vertexCount) * 3;
+        if (mesh.vertices && vertexDataSize > 0) {
+            baseCharacterVertices_[index].assign(mesh.vertices, mesh.vertices + vertexDataSize);
+        }
+        if (mesh.normals && vertexDataSize > 0) {
+            baseCharacterNormals_[index].assign(mesh.normals, mesh.normals + vertexDataSize);
+        }
+        if (!mesh.vertices || mesh.vertexCount <= 0) continue;
+
+        const BoundingBox meshBounds = GetMeshBoundingBox(mesh);
+        const float meshWidth = meshBounds.max.x - meshBounds.min.x;
+        const float meshHeight = meshBounds.max.y - meshBounds.min.y;
+        if (meshWidth > characterWidth * 0.75f &&
+            meshBounds.min.y > baseCharacterBounds_.min.y + height * 0.25f) {
+            proceduralPartByMesh_[index] = 1;
+            proceduralPivotByMesh_[index] =
+                Vector3{characterCenterX, meshBounds.max.y,
+                        (meshBounds.min.z + meshBounds.max.z) * 0.5f};
+            ++armMeshes;
+        } else if (meshBounds.min.y < baseCharacterBounds_.min.y + height * 0.12f &&
+                   meshHeight > height * 0.25f) {
+            proceduralPartByMesh_[index] = 2;
+            proceduralPivotByMesh_[index] =
+                Vector3{characterCenterX, meshBounds.max.y,
+                        (meshBounds.min.z + meshBounds.max.z) * 0.5f};
+            ++legMeshes;
+        }
+    }
+    if (armMeshes > 0 && legMeshes > 0) {
+        TraceLog(LOG_INFO, "Procedural R6 animation found %d arm mesh(es) and %d leg mesh(es).",
+                 armMeshes, legMeshes);
+    } else {
+        TraceLog(LOG_WARNING,
+                 "Procedural R6 animation could not identify both arm and leg meshes; "
+                 "the character will remain static.");
+        std::fill(proceduralPartByMesh_.begin(), proceduralPartByMesh_.end(), 0);
+    }
     if (lightingShader.id != 0) {
         for (int i = 0; i < baseCharacter_.materialCount; ++i)
             baseCharacter_.materials[i].shader = lightingShader;
     }
 
-    if (!error) {
-        const auto processId = static_cast<unsigned long long>(GetCurrentProcessId());
-        const auto walkPath = tempRoot / ("blubox-r6-walk-" + std::to_string(processId) + ".glb");
-        const auto jumpPath = tempRoot / ("blubox-r6-jump-" + std::to_string(processId) + ".glb");
-        const auto writeAsset = [](const std::filesystem::path &path,
-                                   const unsigned char *data, std::size_t size) {
-            std::ofstream output(path, std::ios::binary | std::ios::trunc);
-            return output && output.write(reinterpret_cast<const char *>(data),
-                                          static_cast<std::streamsize>(size));
-        };
-        const auto validGlb = [](const unsigned char *data, std::size_t size) {
-            return size >= 20 && data[0] == 'g' && data[1] == 'l' &&
-                   data[2] == 'T' && data[3] == 'F';
-        };
-        const bool assetsStaged = validGlb(blubox::kR6WalkAnimationData,
-                                           blubox::kR6WalkAnimationDataSize) &&
-            validGlb(blubox::kR6JumpAnimationData, blubox::kR6JumpAnimationDataSize) &&
-            writeAsset(walkPath, blubox::kR6WalkAnimationData, blubox::kR6WalkAnimationDataSize) &&
-            writeAsset(jumpPath, blubox::kR6JumpAnimationData, blubox::kR6JumpAnimationDataSize);
-        Model animationSource{};
-        bool animationReady = false;
-        if (assetsStaged) {
-            animationSource = LoadModel(walkPath.string().c_str());
-            walkAnimations_ = LoadModelAnimations(walkPath.string().c_str(), &walkAnimationCount_);
-            jumpAnimations_ = LoadModelAnimations(jumpPath.string().c_str(), &jumpAnimationCount_);
-        } else {
-            TraceLog(LOG_WARNING, "Could not stage R6 animation clips; keeping the base character unchanged.");
-        }
-        const auto animationMatchesModel = [](const Model &model,
-                                              const ModelAnimation *animations, int count) {
-            if (model.boneCount <= 0 || !model.bones || !animations || count <= 0) return false;
-            for (int animationIndex = 0; animationIndex < count; ++animationIndex) {
-                const ModelAnimation &animation = animations[animationIndex];
-                if (animation.frameCount <= 0 || animation.boneCount != model.boneCount ||
-                    !animation.bones || !animation.framePoses) return false;
-                for (int boneIndex = 0; boneIndex < model.boneCount; ++boneIndex) {
-                    if (std::strcmp(model.bones[boneIndex].name,
-                                    animation.bones[boneIndex].name) != 0)
-                        return false;
-                }
-            }
-            return true;
-        };
+    const auto writeAsset = [](const std::filesystem::path &path,
+                               const unsigned char *data, std::size_t size) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        return output && output.write(reinterpret_cast<const char *>(data),
+                                      static_cast<std::streamsize>(size));
+    };
+    const auto validGlb = [](const unsigned char *data, std::size_t size) {
+        return size >= 20 && data[0] == 'g' && data[1] == 'l' &&
+               data[2] == 'T' && data[3] == 'F';
+    };
 
-        if (assetsStaged && animationSource.meshCount > 0 &&
-            animationMatchesModel(animationSource, walkAnimations_, walkAnimationCount_) &&
-            animationMatchesModel(animationSource, jumpAnimations_, jumpAnimationCount_)) {
-            nlohmann::json walkGltf;
-            std::vector<Matrix> nodeWorldTransforms;
-            std::vector<Matrix> sourceMeshWorldTransforms;
-            if (ParseGlbJson(blubox::kR6WalkAnimationData,
-                             blubox::kR6WalkAnimationDataSize, walkGltf) &&
-                GltfNodeWorldTransforms(walkGltf, nodeWorldTransforms,
-                                        sourceMeshWorldTransforms) &&
-                BuildAnimationVertexMappings(baseCharacter_, animationSource,
-                                             sourceMeshWorldTransforms,
-                                             baseToAnimationSpace_,
-                                             animationToBaseSpace_,
-                                             animationSourceMeshIndices_,
-                                             animationSourceVertexIndices_,
-                                             headMeshIndex_)) {
-                animationSource_ = animationSource;
-                animationSource = Model{};
-                animationReady = true;
-            }
+    const auto processId = static_cast<unsigned long long>(GetCurrentProcessId());
+    const auto walkPath = tempRoot / ("blubox-r6-walk-" + std::to_string(processId) + ".glb");
+    const auto jumpPath = tempRoot / ("blubox-r6-jump-" + std::to_string(processId) + ".glb");
+
+    bool stagedWalk = validGlb(blubox::kR6WalkAnimationData, blubox::kR6WalkAnimationDataSize) &&
+                      writeAsset(walkPath, blubox::kR6WalkAnimationData, blubox::kR6WalkAnimationDataSize);
+    bool stagedJump = validGlb(blubox::kR6JumpAnimationData, blubox::kR6JumpAnimationDataSize) &&
+                      writeAsset(jumpPath, blubox::kR6JumpAnimationData, blubox::kR6JumpAnimationDataSize);
+
+    if (stagedWalk) {
+        walkAnimations_ = LoadModelAnimations(walkPath.string().c_str(), &walkAnimationCount_);
+        if (walkAnimations_ && walkAnimationCount_ > 0) {
+            TraceLog(LOG_INFO, "Loaded glTF walk animation clip with %d frames.", walkAnimationCount_);
         }
-        if (animationReady) {
-            TraceLog(LOG_INFO,
-                     "Retargeted R6 animation clips onto the existing character (%d bones, walk %d frames, jump %d frames).",
-                     animationSource_.boneCount, walkAnimations_[0].frameCount,
-                     jumpAnimations_[0].frameCount);
-        } else {
-            TraceLog(LOG_WARNING,
-                     "Could not retarget R6 animation clips onto the existing character; the original character will remain unchanged.");
-            if (walkAnimations_) UnloadModelAnimations(walkAnimations_, walkAnimationCount_);
-            walkAnimations_ = nullptr;
-            walkAnimationCount_ = 0;
-            if (jumpAnimations_) UnloadModelAnimations(jumpAnimations_, jumpAnimationCount_);
-            jumpAnimations_ = nullptr;
-            jumpAnimationCount_ = 0;
-        }
-        if (animationSource.meshCount > 0) UnloadModel(animationSource);
-        if (!animationReady) {
-            baseToAnimationSpace_.clear();
-            animationToBaseSpace_.clear();
-            animationSourceMeshIndices_.clear();
-            animationSourceVertexIndices_.clear();
-            headMeshIndex_ = -1;
-        }
-        std::error_code ignored;
-        std::filesystem::remove(walkPath, ignored);
-        std::filesystem::remove(jumpPath, ignored);
-    } else {
-        TraceLog(LOG_WARNING, "Could not locate a temporary directory for animated R6 assets.");
     }
+    if (stagedJump) {
+        jumpAnimations_ = LoadModelAnimations(jumpPath.string().c_str(), &jumpAnimationCount_);
+        if (jumpAnimations_ && jumpAnimationCount_ > 0) {
+            TraceLog(LOG_INFO, "Loaded glTF jump animation clip with %d frames.", jumpAnimationCount_);
+        }
+    }
+
+    const bool hasCharacterRig = baseCharacter_.boneCount > 0 && baseCharacter_.bones &&
+                                 baseCharacter_.bindPose;
+    if (!hasCharacterRig) {
+        TraceLog(LOG_WARNING,
+                 "The visible R6 model has no skeleton; using procedural limb animation "
+                 "instead of applying incompatible skeletal clips.");
+    } else if (!walkAnimations_ || walkAnimationCount_ <= 0 ||
+               !jumpAnimations_ || jumpAnimationCount_ <= 0) {
+        TraceLog(LOG_WARNING,
+                 "Could not load both R6 animation clips; keeping the character in its bind pose.");
+    } else if (!IsModelAnimationValid(baseCharacter_, walkAnimations_[0]) ||
+               !IsModelAnimationValid(baseCharacter_, jumpAnimations_[0])) {
+        TraceLog(LOG_WARNING,
+                 "R6 animation skeletons do not match the visible character; keeping its bind pose.");
+    }
+
+    if (!hasCharacterRig || !walkAnimations_ || walkAnimationCount_ <= 0 ||
+        !jumpAnimations_ || jumpAnimationCount_ <= 0 ||
+        !IsModelAnimationValid(baseCharacter_, walkAnimations_[0]) ||
+        !IsModelAnimationValid(baseCharacter_, jumpAnimations_[0])) {
+        if (walkAnimations_) UnloadModelAnimations(walkAnimations_, walkAnimationCount_);
+        walkAnimations_ = nullptr;
+        walkAnimationCount_ = 0;
+        if (jumpAnimations_) UnloadModelAnimations(jumpAnimations_, jumpAnimationCount_);
+        jumpAnimations_ = nullptr;
+        jumpAnimationCount_ = 0;
+    }
+
+    if (walkAnimations_ && walkAnimationCount_ > 0) {
+        TraceLog(LOG_INFO,
+                 "Loaded matching glTF walk/jump clips for the R6 rig (%d meshes, walk %d animation(s), jump %d animation(s)).",
+                 baseCharacter_.meshCount, walkAnimationCount_, jumpAnimationCount_);
+    }
+
+    std::error_code ignored;
+    std::filesystem::remove(walkPath, ignored);
+    std::filesystem::remove(jumpPath, ignored);
+    baseToAnimationSpace_.clear();
+    animationToBaseSpace_.clear();
+    animationSourceMeshIndices_.clear();
+    animationSourceVertexIndices_.clear();
+    headMeshIndex_ = -1;
 
     TraceLog(LOG_INFO, "Loaded Blubox R6 character (%d meshes, %.2f units tall).",
              baseCharacter_.meshCount, height * baseCharacterScale_);
@@ -864,32 +1191,30 @@ bool AvatarAssetCache::DrawBaseCharacter(Vector3 feetPosition,
     }
 
     bool animationApplied = false;
-    if (!animationRetargetingDisabled_ && animationSource_.boneCount > 0) {
-        const ModelAnimation *activeAnimation = walkAnimations_;
-        int activeAnimationCount = walkAnimationCount_;
-        if (animation == CharacterAnimation::Jump) {
-            activeAnimation = jumpAnimations_;
-            activeAnimationCount = jumpAnimationCount_;
-        }
-        if (activeAnimation && activeAnimationCount > 0) {
-            const ModelAnimation &clip = activeAnimation[0];
-            const float duration = static_cast<float>(std::max(1, clip.frameCount - 1)) *
-                                   kGltfAnimationFrameSeconds;
-            const float cycleTime = std::fmod(std::max(0.0f, animationTimeSeconds), duration);
-            const int frame = animation == CharacterAnimation::Idle
-                ? 0
-                : std::clamp(static_cast<int>(cycleTime / duration * clip.frameCount),
-                             0, clip.frameCount - 1);
-            animationApplied = UpdateRetargetedAnimation(
-                baseCharacter_, animationSource_, clip, frame, baseCharacterBounds_,
-                baseToAnimationSpace_, animationToBaseSpace_,
-                animationSourceMeshIndices_, animationSourceVertexIndices_);
-            if (!animationApplied) {
-                animationRetargetingDisabled_ = true;
-                TraceLog(LOG_WARNING,
-                         "R6 animation produced an invalid pose; keeping the character in its bind pose.");
-            }
-        }
+    const ModelAnimation *activeAnimation = walkAnimations_;
+    int activeAnimationCount = walkAnimationCount_;
+    if (animation == CharacterAnimation::Jump) {
+        activeAnimation = jumpAnimations_;
+        activeAnimationCount = jumpAnimationCount_;
+    }
+    if (activeAnimation && activeAnimationCount > 0 && baseCharacter_.boneCount > 0 &&
+        baseCharacter_.bones && baseCharacter_.bindPose &&
+        IsModelAnimationValid(baseCharacter_, activeAnimation[0])) {
+        const ModelAnimation &clip = activeAnimation[0];
+        const float duration = static_cast<float>(std::max(1, clip.frameCount - 1)) *
+                               (1.0f / kAnimationFramesPerSecond);
+        const float cycleTime = std::fmod(std::max(0.0f, animationTimeSeconds), duration);
+        const int frame = animation == CharacterAnimation::Idle
+            ? 0
+            : std::clamp(static_cast<int>(cycleTime / duration * clip.frameCount),
+                         0, clip.frameCount - 1);
+        UpdateModelAnimation(baseCharacter_, clip, frame);
+        animationApplied = true;
+    }
+    if (!animationApplied) {
+        ApplyRigidPartAnimation(baseCharacter_, baseCharacterVertices_, baseCharacterNormals_,
+                                proceduralPartByMesh_, proceduralPivotByMesh_, animation,
+                                animationTimeSeconds, proceduralPoseApplied_);
     }
 
     rlPushMatrix();
@@ -1137,6 +1462,10 @@ void AvatarAssetCache::Unload() noexcept {
     if (baseCharacter_.meshCount > 0) UnloadModel(baseCharacter_);
     baseCharacter_ = Model{};
     baseCharacterMaterials_.clear();
+    baseCharacterVertices_.clear();
+    baseCharacterNormals_.clear();
+    proceduralPartByMesh_.clear();
+    proceduralPivotByMesh_.clear();
     if (animationSource_.meshCount > 0) UnloadModel(animationSource_);
     animationSource_ = Model{};
     if (walkAnimations_) UnloadModelAnimations(walkAnimations_, walkAnimationCount_);
@@ -1150,6 +1479,7 @@ void AvatarAssetCache::Unload() noexcept {
     animationSourceMeshIndices_.clear();
     animationSourceVertexIndices_.clear();
     headMeshIndex_ = -1;
+    proceduralPoseApplied_ = false;
     baseCharacterLoaded_ = false;
     animationRetargetingDisabled_ = false;
     for (auto& [_, entry] : textures_) if (entry.texture.id) UnloadTexture(entry.texture);

@@ -34,6 +34,10 @@ private:
     Model baseCharacter_{};
     BoundingBox baseCharacterBounds_{};
     std::unordered_map<std::string, int> baseCharacterMaterials_;
+    std::vector<std::vector<float>> baseCharacterVertices_;
+    std::vector<std::vector<float>> baseCharacterNormals_;
+    std::vector<int> proceduralPartByMesh_;
+    std::vector<Vector3> proceduralPivotByMesh_;
     Model animationSource_{};
     ModelAnimation *walkAnimations_ = nullptr;
     int walkAnimationCount_ = 0;
@@ -50,6 +54,7 @@ private:
     Texture2D shadowTexture_{};
     float baseCharacterScale_ = 1.0f;
     int headMeshIndex_ = -1;
+    bool proceduralPoseApplied_ = false;
     bool baseCharacterLoaded_ = false;
     bool animationRetargetingDisabled_ = false;
     TextureEntry& texture(const std::string& url);
