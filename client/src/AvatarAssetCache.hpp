@@ -33,6 +33,9 @@ private:
     struct ModelEntry { Model model{}; BoundingBox bounds{}; bool attempted = false; bool hasExternalTexture = false; };
     Model baseCharacter_{};
     BoundingBox baseCharacterBounds_{};
+    Mesh faceOverlayMesh_{};
+    Material faceOverlayMaterial_{};
+    Texture2D faceDefaultTexture_{};
     std::unordered_map<std::string, int> baseCharacterMaterials_;
     std::vector<std::vector<float>> baseCharacterVertices_;
     std::vector<std::vector<float>> baseCharacterNormals_;
@@ -54,6 +57,7 @@ private:
     Texture2D shadowTexture_{};
     float baseCharacterScale_ = 1.0f;
     int headMeshIndex_ = -1;
+    bool faceOverlayLoaded_ = false;
     bool proceduralPoseApplied_ = false;
     bool baseCharacterLoaded_ = false;
     bool animationRetargetingDisabled_ = false;

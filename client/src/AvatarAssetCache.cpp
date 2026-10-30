@@ -335,54 +335,81 @@ void DrawOverlay(Texture2D texture, Rectangle crop, float centerX, float centerY
     rlSetTexture(0);
 }
 
-void DrawCurvedOverlay(Texture2D texture, float centerX, float centerY,
-                       float width, float height, float frontZ, Color tint) {
-    if (!texture.id || texture.width <= 0 || texture.height <= 0) return;
-
+bool CreateCurvedFaceMesh(Mesh &mesh) {
     constexpr int horizontalSegments = 12;
     constexpr int verticalSegments = 8;
     constexpr float horizontalCurvature = 0.02f;
     constexpr float verticalCurvature = 0.005f;
-    const auto vertex = [&](float x, float y, float u, float v) {
-        const float localX = centerX + x * width * 0.5f;
-        const float localY = centerY + y * height * 0.5f;
-        const float depth = frontZ - horizontalCurvature * x * x -
-                            verticalCurvature * y * y;
-        const Vector3 normal{
-            2.0f * horizontalCurvature * x / (width * 0.5f),
-            2.0f * verticalCurvature * y / (height * 0.5f),
-            1.0f};
-        const float normalLength = std::sqrt(normal.x * normal.x + normal.y * normal.y +
-                                             normal.z * normal.z);
-        rlNormal3f(normal.x / normalLength, normal.y / normalLength, normal.z / normalLength);
-        rlTexCoord2f(u, v);
-        rlVertex3f(localX, localY, depth);
-    };
+    constexpr int columns = horizontalSegments + 1;
+    constexpr int rows = verticalSegments + 1;
+    mesh.vertexCount = columns * rows;
+    mesh.triangleCount = horizontalSegments * verticalSegments * 2;
+    mesh.vertices = static_cast<float *>(MemAlloc(
+        static_cast<unsigned int>(mesh.vertexCount * 3 * static_cast<int>(sizeof(float)))));
+    mesh.normals = static_cast<float *>(MemAlloc(
+        static_cast<unsigned int>(mesh.vertexCount * 3 * static_cast<int>(sizeof(float)))));
+    mesh.texcoords = static_cast<float *>(MemAlloc(
+        static_cast<unsigned int>(mesh.vertexCount * 2 * static_cast<int>(sizeof(float)))));
+    mesh.indices = static_cast<unsigned short *>(MemAlloc(
+        static_cast<unsigned int>(mesh.triangleCount * 3 *
+                                 static_cast<int>(sizeof(unsigned short)))));
+    if (!mesh.vertices || !mesh.normals || !mesh.texcoords || !mesh.indices) {
+        UnloadMesh(mesh);
+        mesh = Mesh{};
+        return false;
+    }
 
-    rlSetTexture(texture.id);
-    rlBegin(RL_TRIANGLES);
-    rlColor4ub(tint.r, tint.g, tint.b, tint.a);
-    for (int row = 0; row < verticalSegments; ++row) {
-        const float top = 1.0f - 2.0f * static_cast<float>(row) / verticalSegments;
-        const float bottom = 1.0f - 2.0f * static_cast<float>(row + 1) / verticalSegments;
-        const float topV = static_cast<float>(row) / verticalSegments;
-        const float bottomV = static_cast<float>(row + 1) / verticalSegments;
-        for (int column = 0; column < horizontalSegments; ++column) {
-            const float left = 2.0f * static_cast<float>(column) / horizontalSegments - 1.0f;
-            const float right = 2.0f * static_cast<float>(column + 1) / horizontalSegments - 1.0f;
-            const float leftU = static_cast<float>(column) / horizontalSegments;
-            const float rightU = static_cast<float>(column + 1) / horizontalSegments;
-
-            vertex(left, bottom, leftU, bottomV);
-            vertex(right, bottom, rightU, bottomV);
-            vertex(right, top, rightU, topV);
-            vertex(left, bottom, leftU, bottomV);
-            vertex(right, top, rightU, topV);
-            vertex(left, top, leftU, topV);
+    for (int row = 0; row < rows; ++row) {
+        const float y = 1.0f - 2.0f * static_cast<float>(row) / verticalSegments;
+        const float v = static_cast<float>(row) / verticalSegments;
+        for (int column = 0; column < columns; ++column) {
+            const float x = 2.0f * static_cast<float>(column) / horizontalSegments - 1.0f;
+            const float u = static_cast<float>(column) / horizontalSegments;
+            const float depth = -horizontalCurvature * x * x -
+                                verticalCurvature * y * y;
+            const Vector3 normal{
+                2.0f * horizontalCurvature * x,
+                2.0f * verticalCurvature * y,
+                1.0f};
+            const float normalLength = std::sqrt(normal.x * normal.x + normal.y * normal.y +
+                                                 normal.z * normal.z);
+            const int vertexIndex = row * columns + column;
+            const int positionOffset = vertexIndex * 3;
+            const int texcoordOffset = vertexIndex * 2;
+            mesh.vertices[positionOffset] = x;
+            mesh.vertices[positionOffset + 1] = y;
+            mesh.vertices[positionOffset + 2] = depth;
+            mesh.normals[positionOffset] = normal.x / normalLength;
+            mesh.normals[positionOffset + 1] = normal.y / normalLength;
+            mesh.normals[positionOffset + 2] = normal.z / normalLength;
+            mesh.texcoords[texcoordOffset] = u;
+            mesh.texcoords[texcoordOffset + 1] = v;
         }
     }
-    rlEnd();
-    rlSetTexture(0);
+
+    int indexOffset = 0;
+    for (int row = 0; row < verticalSegments; ++row) {
+        for (int column = 0; column < horizontalSegments; ++column) {
+            const auto topLeft = static_cast<unsigned short>(row * columns + column);
+            const auto topRight = static_cast<unsigned short>(topLeft + 1);
+            const auto bottomLeft = static_cast<unsigned short>((row + 1) * columns + column);
+            const auto bottomRight = static_cast<unsigned short>(bottomLeft + 1);
+            mesh.indices[indexOffset++] = bottomLeft;
+            mesh.indices[indexOffset++] = bottomRight;
+            mesh.indices[indexOffset++] = topRight;
+            mesh.indices[indexOffset++] = bottomLeft;
+            mesh.indices[indexOffset++] = topRight;
+            mesh.indices[indexOffset++] = topLeft;
+        }
+    }
+
+    UploadMesh(&mesh, false);
+    if (mesh.vboId[0] == 0) {
+        UnloadMesh(mesh);
+        mesh = Mesh{};
+        return false;
+    }
+    return true;
 }
 
 [[maybe_unused]] bool ParseGlbJson(const unsigned char *data, std::size_t size,
@@ -1032,6 +1059,23 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
         return false;
     }
     baseCharacterScale_ = kAvatarTargetHeight / height;
+    faceOverlayLoaded_ = CreateCurvedFaceMesh(faceOverlayMesh_);
+    if (!faceOverlayLoaded_) {
+        TraceLog(LOG_WARNING, "Could not create the marketplace face overlay mesh.");
+    } else {
+        faceOverlayMaterial_ = LoadMaterialDefault();
+        if (!faceOverlayMaterial_.maps) {
+            UnloadMesh(faceOverlayMesh_);
+            faceOverlayMesh_ = Mesh{};
+            faceOverlayLoaded_ = false;
+            TraceLog(LOG_WARNING, "Could not create the marketplace face overlay material.");
+        } else {
+            faceOverlayMaterial_.shader =
+                Shader{rlGetShaderIdDefault(), rlGetShaderLocsDefault()};
+            faceDefaultTexture_ = faceOverlayMaterial_.maps[MATERIAL_MAP_DIFFUSE].texture;
+            faceOverlayMaterial_.maps[MATERIAL_MAP_DIFFUSE].color = WHITE;
+        }
+    }
     baseCharacterVertices_.clear();
     baseCharacterNormals_.clear();
     proceduralPartByMesh_.assign(static_cast<std::size_t>(baseCharacter_.meshCount), 0);
@@ -1385,17 +1429,14 @@ void AvatarAssetCache::Draw(const NetworkPlayerSnapshot& avatar, bool drawClothi
             rlPushMatrix();
             rlMultMatrixf(MatrixToFloat(*faceTransform));
         }
-        const unsigned int restoreShaderId = lightingShader_.id != 0
-            ? lightingShader_.id
-            : rlGetShaderIdDefault();
-        int *restoreShaderLocations = lightingShader_.id != 0
-            ? lightingShader_.locs
-            : rlGetShaderLocsDefault();
-        // Match the website preview's unlit face material instead of washing
-        // decal colors through the world-lighting shader.
-        rlSetShader(rlGetShaderIdDefault(), rlGetShaderLocsDefault());
-        DrawCurvedOverlay(faceTexture, 0.0f, 1.93f, 0.35f, 0.35f, faceFrontZ, WHITE);
-        rlSetShader(restoreShaderId, restoreShaderLocations);
+        if (faceOverlayLoaded_) {
+            faceOverlayMaterial_.maps[MATERIAL_MAP_DIFFUSE].texture = faceTexture;
+            const Matrix faceModel = MatrixMultiply(
+                MatrixScale(0.175f, 0.175f, 1.0f),
+                MatrixTranslate(0.0f, 1.93f, faceFrontZ));
+            DrawMesh(faceOverlayMesh_, faceOverlayMaterial_, faceModel);
+            faceOverlayMaterial_.maps[MATERIAL_MAP_DIFFUSE].texture = faceDefaultTexture_;
+        }
         if (faceTransform) rlPopMatrix();
     }
     for (const auto& accessory : avatar.accessoryAssets) {
@@ -1469,6 +1510,12 @@ void AvatarAssetCache::DrawGroundShadow(Vector3 groundPoint, Vector3 feetPositio
 }
 
 void AvatarAssetCache::Unload() noexcept {
+    if (faceOverlayLoaded_) UnloadMesh(faceOverlayMesh_);
+    if (faceOverlayMaterial_.maps) UnloadMaterial(faceOverlayMaterial_);
+    faceOverlayMesh_ = Mesh{};
+    faceOverlayMaterial_ = Material{};
+    faceDefaultTexture_ = Texture2D{};
+    faceOverlayLoaded_ = false;
     if (baseCharacter_.meshCount > 0) UnloadModel(baseCharacter_);
     baseCharacter_ = Model{};
     baseCharacterMaterials_.clear();
