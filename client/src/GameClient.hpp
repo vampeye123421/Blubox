@@ -80,6 +80,7 @@ private:
     float cameraDistance_ = 7.0f;
     bool mouseCaptured_ = true;
     bool shiftLockEnabled_ = false;
+    bool shiftLockTapPending_ = false;
     bool disconnectUiActive_ = false;
     bool chatInputActive_ = false;
     bool chatPanelVisible_ = true;

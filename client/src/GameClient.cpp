@@ -657,9 +657,8 @@ int GameClient::Run() {
     camera_.up = Vector3{0.0f, 1.0f, 0.0f};
     camera_.fovy = 60.0f;
     camera_.projection = CAMERA_PERSPECTIVE;
-    mouseCaptured_ = !(publishedWorldLoaded && publishedWorld_.HasGui());
-    if (mouseCaptured_) DisableCursor();
-    else EnableCursor();
+    mouseCaptured_ = false;
+    EnableCursor();
     UpdateCamera();
     TraceLog(LOG_INFO, "GameClient: entering frame loop.");
 
@@ -754,13 +753,21 @@ void GameClient::Update(float deltaSeconds) {
         UpdateChatInput();
         return;
     }
+    bool slashCharacterPressed = false;
+    for (int codepoint = GetCharPressed(); codepoint > 0; codepoint = GetCharPressed()) {
+        slashCharacterPressed = slashCharacterPressed || codepoint == '/';
+    }
+    bool nonShiftKeyPressed = false;
+    for (int key = GetKeyPressed(); key > 0; key = GetKeyPressed()) {
+        if (key != KEY_LEFT_SHIFT && key != KEY_RIGHT_SHIFT) nonShiftKeyPressed = true;
+    }
     const Vector2 mousePosition = GetMousePosition();
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
         CheckCollisionPointRec(mousePosition, ChatButtonBounds())) {
         chatPanelVisible_ = !chatPanelVisible_;
         return;
     }
-    if (IsKeyPressed(KEY_SLASH)) {
+    if (IsKeyPressed(KEY_SLASH) || slashCharacterPressed) {
         OpenChatInput();
         return;
     }
@@ -771,6 +778,14 @@ void GameClient::Update(float deltaSeconds) {
     }
 
     if (IsKeyPressed(KEY_LEFT_SHIFT) || IsKeyPressed(KEY_RIGHT_SHIFT)) {
+        shiftLockTapPending_ = true;
+    }
+    if (nonShiftKeyPressed) {
+        shiftLockTapPending_ = false;
+    }
+    const bool shiftHeld = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    if (shiftLockTapPending_ && !shiftHeld) {
+        shiftLockTapPending_ = false;
         shiftLockEnabled_ = !shiftLockEnabled_;
         if (shiftLockEnabled_) {
             mouseCaptured_ = true;
@@ -891,6 +906,7 @@ void GameClient::UpdateChatInput() {
 }
 
 void GameClient::OpenChatInput() {
+    shiftLockTapPending_ = false;
     chatPanelVisible_ = true;
     chatInputActive_ = true;
     chatReturnToShiftLock_ = shiftLockEnabled_;

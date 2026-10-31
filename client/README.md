@@ -55,7 +55,8 @@ For a valid `join` URI, the client opens an asynchronous ENet UDP connection to 
 - Mouse: rotate the third-person view
 - `/`: open chat; `ENTER`: send a message and return to gameplay
 - Click the chat input to focus it; click outside or press `ESC` to unfocus
-- `TAB`: capture or release the mouse (`left click` to capture it again)
+- The pointer starts free so chat and UI can be clicked; click the world to capture it
+- `TAB`: capture or release the mouse
 - `F11`: toggle fullscreen
 - `ESC`: release the mouse, or cancel chat while the input is open
 
