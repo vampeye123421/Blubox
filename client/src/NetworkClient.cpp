@@ -46,13 +46,20 @@ constexpr std::size_t kMaxTokenBytes = 8192;
 constexpr std::size_t kMaxWorldIdBytes = 1024;
 constexpr enet_uint8 kJoinHandshakeMessage = 0x01;
 constexpr enet_uint8 kClientPositionMessage = 0x02;
+constexpr enet_uint8 kChatSendMessage = 0x03;
 constexpr enet_uint8 kJoinAcceptedMessage = 0x81;
 constexpr enet_uint8 kWorldSnapshotMessage = 0x82;
-constexpr enet_uint8 kProtocolVersion = 5;
+constexpr enet_uint8 kChatHistoryMessage = 0x83;
+constexpr enet_uint8 kChatMessage = 0x84;
+constexpr enet_uint8 kChatRejectedMessage = 0x85;
+constexpr enet_uint8 kProtocolVersion = 6;
 constexpr std::size_t kMaxUserIdBytes = 256;
 constexpr std::size_t kMaxDisplayNameBytes = 64;
 constexpr std::size_t kMaxSnapshotPlayers = 128;
 constexpr std::size_t kMaxAvatarDescriptionBytes = 8192;
+constexpr std::size_t kMaxChatMessageBytes = 256;
+constexpr std::size_t kMaxChatHistoryBatch = 16;
+constexpr std::size_t kMaxChatHistory = 100;
 
 bool ReadAvatar(std::string_view payload, NetworkPlayerSnapshot& player) {
     if (payload.empty() || payload.size() > kMaxAvatarDescriptionBytes) return false;
@@ -186,6 +193,65 @@ void SecureErase(std::vector<enet_uint8> &buffer) noexcept {
     buffer.clear();
 }
 
+bool IsValidUtf8(std::string_view text) {
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+        const auto lead = static_cast<unsigned char>(text[offset]);
+        std::size_t length = 0;
+        std::uint32_t codepoint = 0;
+        if (lead < 0x80) {
+            length = 1;
+            codepoint = lead;
+        } else if ((lead & 0xE0) == 0xC0) {
+            length = 2;
+            codepoint = lead & 0x1F;
+        } else if ((lead & 0xF0) == 0xE0) {
+            length = 3;
+            codepoint = lead & 0x0F;
+        } else if ((lead & 0xF8) == 0xF0) {
+            length = 4;
+            codepoint = lead & 0x07;
+        } else {
+            return false;
+        }
+        if (text.size() - offset < length) return false;
+        for (std::size_t i = 1; i < length; ++i) {
+            const auto continuation = static_cast<unsigned char>(text[offset + i]);
+            if ((continuation & 0xC0) != 0x80) return false;
+            codepoint = (codepoint << 6) | (continuation & 0x3F);
+        }
+        if ((length == 2 && codepoint < 0x80) ||
+            (length == 3 && codepoint < 0x800) ||
+            (length == 4 && codepoint < 0x10000) ||
+            (codepoint >= 0xD800 && codepoint <= 0xDFFF) || codepoint > 0x10FFFF) {
+            return false;
+        }
+        offset += length;
+    }
+    return true;
+}
+
+bool ReadChatEntry(const enet_uint8 *data, std::size_t size, std::size_t &offset,
+                   ChatMessageSnapshot &message) {
+    constexpr std::size_t kFixedBytes = 8 + 8 + 1 + 2;
+    if (offset > size || size - offset < kFixedBytes) return false;
+    message.sequence = ReadU64(data + offset);
+    message.senderSessionId = ReadU64(data + offset + 8);
+    const std::size_t nameLength = data[offset + 16];
+    const std::size_t textLength = ReadU16(data + offset + 17);
+    offset += kFixedBytes;
+    if (message.sequence == 0 || message.senderSessionId == 0 || nameLength == 0 ||
+        nameLength > kMaxDisplayNameBytes || textLength == 0 ||
+        textLength > kMaxChatMessageBytes || size - offset < nameLength + textLength) {
+        return false;
+    }
+    message.displayName.assign(reinterpret_cast<const char *>(data + offset), nameLength);
+    offset += nameLength;
+    message.text.assign(reinterpret_cast<const char *>(data + offset), textLength);
+    offset += textLength;
+    return IsValidUtf8(message.displayName) && IsValidUtf8(message.text);
+}
+
 } // namespace
 
 NetworkClient::~NetworkClient() {
@@ -274,6 +340,8 @@ void NetworkClient::Poll() {
             userVerified_ = false;
             userId_.clear();
             players_.clear();
+            chatMessages_.clear();
+            chatStatus_.clear();
             disconnectKind_ = event.data == 1 ? DisconnectKind::Kicked
                 : event.data == 2 ? DisconnectKind::JoinRejected
                                   : DisconnectKind::ConnectionLost;
@@ -295,6 +363,8 @@ void NetworkClient::Poll() {
         userVerified_ = false;
         userId_.clear();
         players_.clear();
+        chatMessages_.clear();
+        chatStatus_.clear();
         disconnectKind_ = DisconnectKind::ConnectionLost;
     }
 }
@@ -304,6 +374,57 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
     const auto *bytes = reinterpret_cast<const enet_uint8 *>(data);
     if (bytes[1] != kProtocolVersion) {
         TraceLog(LOG_WARNING, "ENet packet uses an unsupported protocol version.");
+        return;
+    }
+
+    if (bytes[0] == kChatHistoryMessage) {
+        if (size < 3 || !authenticated_) return;
+        const std::size_t count = bytes[2];
+        if (count > kMaxChatHistoryBatch) return;
+        std::vector<ChatMessageSnapshot> batch;
+        batch.reserve(count);
+        std::size_t offset = 3;
+        for (std::size_t index = 0; index < count; ++index) {
+            ChatMessageSnapshot message;
+            if (!ReadChatEntry(bytes, size, offset, message)) return;
+            batch.push_back(std::move(message));
+        }
+        if (offset != size) return;
+        for (ChatMessageSnapshot &message : batch) {
+            const auto duplicate = std::find_if(chatMessages_.begin(), chatMessages_.end(),
+                [&message](const ChatMessageSnapshot &existing) {
+                    return existing.sequence == message.sequence;
+                });
+            if (duplicate == chatMessages_.end()) {
+                chatMessages_.push_back(std::move(message));
+                if (chatMessages_.size() > kMaxChatHistory) chatMessages_.erase(chatMessages_.begin());
+            }
+        }
+        return;
+    }
+
+    if (bytes[0] == kChatMessage) {
+        if (size < 2 || !authenticated_) return;
+        std::size_t offset = 2;
+        ChatMessageSnapshot message;
+        if (!ReadChatEntry(bytes, size, offset, message) || offset != size) return;
+        const auto duplicate = std::find_if(chatMessages_.begin(), chatMessages_.end(),
+            [&message](const ChatMessageSnapshot &existing) {
+                return existing.sequence == message.sequence;
+            });
+        if (duplicate == chatMessages_.end()) {
+            chatMessages_.push_back(std::move(message));
+            if (chatMessages_.size() > kMaxChatHistory) chatMessages_.erase(chatMessages_.begin());
+        }
+        chatStatus_.clear();
+        return;
+    }
+
+    if (bytes[0] == kChatRejectedMessage) {
+        if (size == 3 && authenticated_) {
+            chatStatus_ = "Message not sent. Please wait and try again.";
+            chatStatusUntil_ = GetTime() + 4.0;
+        }
         return;
     }
 
@@ -400,6 +521,30 @@ void NetworkClient::SendPlayerPosition(float x, float y, float z, float yaw) {
     enet_host_flush(host_);
 }
 
+bool NetworkClient::SendChatMessage(std::string_view text) {
+    if (peer_ == nullptr || host_ == nullptr || !authenticated_ || text.empty() ||
+        text.size() > kMaxChatMessageBytes) {
+        chatStatus_ = "Chat message could not be sent.";
+        chatStatusUntil_ = GetTime() + 4.0;
+        return false;
+    }
+
+    std::vector<enet_uint8> payload{kChatSendMessage, kProtocolVersion};
+    AppendU16(payload, text.size());
+    payload.insert(payload.end(), text.begin(), text.end());
+    ENetPacket *packet = enet_packet_create(payload.data(), payload.size(),
+                                             ENET_PACKET_FLAG_RELIABLE);
+    if (packet == nullptr || enet_peer_send(peer_, 0, packet) != 0) {
+        if (packet != nullptr) enet_packet_destroy(packet);
+        chatStatus_ = "Chat message could not be sent.";
+        chatStatusUntil_ = GetTime() + 4.0;
+        return false;
+    }
+    enet_host_flush(host_);
+    chatStatus_.clear();
+    return true;
+}
+
 bool NetworkClient::SendJoinHandshake() {
     if (peer_ == nullptr || session_ == nullptr) return false;
 
@@ -457,9 +602,12 @@ void NetworkClient::Shutdown() noexcept {
     }
     session_ = nullptr;
     userId_.clear();
+    chatStatus_.clear();
+    chatStatusUntil_ = 0.0;
     sessionId_ = 0;
     userVerified_ = false;
     players_.clear();
+    chatMessages_.clear();
     authenticated_ = false;
     disconnectKind_ = DisconnectKind::None;
     if (enetInitialized_) {

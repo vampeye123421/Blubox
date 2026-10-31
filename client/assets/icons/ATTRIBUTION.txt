@@ -1,0 +1,3 @@
+Chat icon: Font Awesome Free Solid "comments" (Fonticons, Inc.)
+https://fontawesome.com/icons/comments
+Icon license: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/

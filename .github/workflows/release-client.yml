@@ -110,6 +110,7 @@ jobs:
             'studio-source/dist/release_staging/BluboxStudio.exe' `
             'studio-source/dist/release_staging/assets/editor/fonts/InterVariable.ttf' `
             'studio-source/dist/release_staging/assets/editor/fonts/JetBrainsMonoRegular.ttf' `
+            'client/assets/icons/ATTRIBUTION.txt' `
             --repo '${{ github.repository }}' `
             --title "Blubox runtime payloads v$version" `
             --notes 'Runtime files downloaded by the Blubox launchers.' `

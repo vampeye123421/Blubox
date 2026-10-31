@@ -46,16 +46,18 @@ With MinGW or a single-configuration generator, use `./build/blubox_launcher.exe
 
 Once registered, Windows starts the launcher with the URL; the launcher forwards the received arguments to the client, including `blubox://join?token=...&worldId=123`. The client extracts the token and world ID into `ClientSession`, which remains in memory only. The token is removed from the copied URI/query after extraction and overwritten when the session is destroyed; it is never written to a file or included in logs. The client keeps non-sensitive routing data in `ProtocolLaunchData`. Percent-encoded values are decoded; duplicate parameters or invalid encoding are rejected. A `join` request without a token or world ID produces a warning.
 
-For a valid `join` URI, the client opens an asynchronous ENet UDP connection to `blubox-node1.duckdns.org:7777` and sends a version 2 handshake with the token and world ID over a reliable channel. The loop calls `enet_host_service(..., 0)` without blocking rendering. After authentication, the client sends the player's position at 20 Hz; the server broadcasts world snapshots at 60 Hz. ENet does not encrypt traffic.
+For a valid `join` URI, the client opens an asynchronous ENet UDP connection to `blubox-node1.duckdns.org:7777` and sends a version 6 handshake with the token and world ID over a reliable channel. The loop calls `enet_host_service(..., 0)` without blocking rendering. After authentication, the client sends the player's position at 20 Hz; the server broadcasts world snapshots at 60 Hz. ENet does not encrypt traffic.
 
 ## Controls
 
 - `W`, `A`, `S`, `D` (or arrow keys): move the player
 - `SPACE`: jump when the character is on the ground
 - Mouse: rotate the third-person view
+- `/`: open chat; `ENTER`: send a message and return to gameplay
+- Click the chat input to focus it; click outside or press `ESC` to unfocus
 - `TAB`: capture or release the mouse (`left click` to capture it again)
 - `F11`: toggle fullscreen
-- `ESC`: exit
+- `ESC`: release the mouse, or cancel chat while the input is open
 
 Physics uses a fixed 120 Hz timestep accumulator, with a limit on catch-up after pauses or dragged windows. The graphics frame rate targets 180 FPS, and the window can be resized.
 Remote players have kinematic capsule colliders in the local physics world, so the local player cannot walk through their avatars. Their collider positions follow the same smoothed network snapshots as their rendered avatars.
@@ -66,4 +68,7 @@ The visible R6 character is embedded from `assets/avatars/BluboxR6_Studio.glb`. 
 
 The dedicated server and its updater are maintained separately in the private
 `vampeye123421/blubox-server` repository. The client uses ENet protocol version
-2 and connects to the node configured by the site's join flow.
+6 and connects to the node configured by the site's join flow. Press `/`
+to open chat, `Enter` to send, and click outside or press `Esc` to unfocus.
+Chat is authoritative and scoped to the authenticated `worldId`; the server
+sends recent history to late joiners and does not persist messages.

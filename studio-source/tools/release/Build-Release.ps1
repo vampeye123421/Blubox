@@ -78,6 +78,7 @@ $studioLauncherExe = Find-BuiltExecutable $ClientBuildDir 'blubox_studio_launche
 $studioExe = Find-BuiltExecutable $StudioBuildDir 'blubox_studio.exe'
 $fontDir = Join-Path $StudioRoot 'assets\editor\fonts'
 $clientDependencyLicenses = @(
+    @{ Source = (Join-Path $ClientRoot 'assets\icons\ATTRIBUTION.txt'); Name = 'FontAwesome-Comments-ATTRIBUTION.txt' },
     @{ Source = (Join-Path $ClientRoot 'assets\fonts\OFL.txt'); Name = 'Lato-OFL.txt' },
     @{ Source = (Join-Path $ClientBuildDir '_deps\raylib-src\LICENSE'); Name = 'raylib-LICENSE.txt' },
     @{ Source = (Join-Path $ClientBuildDir '_deps\joltphysics-src\LICENSE'); Name = 'Jolt-LICENSE.txt' },

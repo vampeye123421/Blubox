@@ -1,6 +1,8 @@
 #include "GameClient.hpp"
 #include "BluboxBrandIcon.hpp"
+#include "BluboxChatIcon.hpp"
 #include "BluboxUiFont.hpp"
+#include "BluboxVerifiedBadge.hpp"
 #include "RaylibCompat.hpp"
 
 #include <algorithm>
@@ -27,6 +29,14 @@ constexpr float kMaximumCameraPitch = 0.85f;
 constexpr float kGroundHalfExtent = 50.0f;
 constexpr float kGroundThickness = 1.0f;
 constexpr int kSkyFaceSize = 160;
+constexpr std::size_t kMaxChatMessageBytes = 256;
+constexpr float kChatButtonX = 18.0f;
+constexpr float kChatButtonY = 18.0f;
+constexpr float kChatButtonWidth = 100.0f;
+constexpr float kChatButtonHeight = 44.0f;
+constexpr float kChatPanelWidth = 440.0f;
+constexpr float kChatPanelHeight = 330.0f;
+constexpr float kChatPanelGap = 10.0f;
 // Keep direct light on the player's camera-facing side so character shading is
 // visible from the normal third-person view. The artwork sun remains in front
 // of the camera, independent from this lighting direction.
@@ -114,6 +124,63 @@ void main() {
     finalColor = vec4(texture(environmentMap, normalize(fragDirection)).rgb, 1.0);
 }
 )GLSL";
+
+void AppendUtf8(std::string &text, int codepoint) {
+    if (codepoint < 0x80) {
+        text.push_back(static_cast<char>(codepoint));
+    } else if (codepoint < 0x800) {
+        text.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+        text.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    } else if (codepoint < 0x10000 &&
+               !(codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+        text.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+        text.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+        text.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    } else if (codepoint <= 0x10FFFF) {
+        text.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+        text.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+        text.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+        text.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+}
+
+std::string FitChatLine(const Font *font, std::string_view text, float maxWidth,
+                        float fontSize, float spacing) {
+    if (MeasureTextExSafe(font, std::string(text).c_str(), fontSize, spacing).x <= maxWidth)
+        return std::string(text);
+
+    std::size_t lastFit = 0;
+    for (std::size_t end = 0; end < text.size();) {
+        const unsigned char lead = static_cast<unsigned char>(text[end]);
+        const std::size_t codepointBytes = lead < 0x80 ? 1 :
+            (lead & 0xE0) == 0xC0 ? 2 :
+            (lead & 0xF0) == 0xE0 ? 3 :
+            (lead & 0xF8) == 0xF0 ? 4 : 1;
+        end = std::min(text.size(), end + codepointBytes);
+        const std::string candidate(text.substr(0, end));
+        if (MeasureTextExSafe(font, candidate.c_str(), fontSize, spacing).x > maxWidth)
+            break;
+        lastFit = end;
+    }
+    if (lastFit == 0) return "...";
+    return std::string(text.substr(0, lastFit)) + "...";
+}
+
+Rectangle ChatButtonBounds() {
+    return Rectangle{kChatButtonX, kChatButtonY, kChatButtonWidth, kChatButtonHeight};
+}
+
+Rectangle ChatPanelBounds() {
+    return Rectangle{kChatButtonX,
+                     kChatButtonY + kChatButtonHeight + kChatPanelGap,
+                     kChatPanelWidth, kChatPanelHeight};
+}
+
+Rectangle ChatInputBounds() {
+    const Rectangle panel = ChatPanelBounds();
+    return Rectangle{panel.x + 14.0f, panel.y + panel.height - 58.0f,
+                     panel.width - 28.0f, 38.0f};
+}
 
 float SmoothStep(float edge0, float edge1, float value) {
     const float t = std::clamp((value - edge0) / (edge1 - edge0), 0.0f, 1.0f);
@@ -419,6 +486,24 @@ int GameClient::Run() {
         SetWindowIcon(appIcon);
         UnloadImage(appIcon);
     }
+    Image verifiedBadgeImage = LoadImageFromMemory(
+        ".png", blubox::kVerifiedBadgeData, blubox::kVerifiedBadgeDataSize);
+    if (verifiedBadgeImage.data != nullptr) {
+        verifiedBadgeTexture_ = LoadTextureFromImage(verifiedBadgeImage);
+        UnloadImage(verifiedBadgeImage);
+    }
+    if (verifiedBadgeTexture_.id == 0) {
+        TraceLog(LOG_WARNING, "Verified chat badge could not be loaded.");
+    }
+    Image chatIconImage = LoadImageFromMemory(
+        ".png", blubox::kChatIconData, blubox::kChatIconDataSize);
+    if (chatIconImage.data != nullptr) {
+        chatIconTexture_ = LoadTextureFromImage(chatIconImage);
+        UnloadImage(chatIconImage);
+    }
+    if (chatIconTexture_.id == 0) {
+        TraceLog(LOG_WARNING, "Chat icon could not be loaded.");
+    }
 
     if (options_.protocolLaunch.has_value() && options_.protocolLaunch->action == "join") {
         networkClient_.Connect(session_);
@@ -629,6 +714,8 @@ int GameClient::Run() {
         if (texture.id != 0) UnloadTexture(texture);
     }
     nameplateTextures_.clear();
+    if (verifiedBadgeTexture_.id != 0) UnloadTexture(verifiedBadgeTexture_);
+    if (chatIconTexture_.id != 0) UnloadTexture(chatIconTexture_);
     if (characterCylinderModel_.meshCount > 0) UnloadModel(characterCylinderModel_);
     if (characterSphereModel_.meshCount > 0) UnloadModel(characterSphereModel_);
     if (sunTexture_.id != 0) UnloadTexture(sunTexture_);
@@ -660,6 +747,26 @@ void GameClient::Update(float deltaSeconds) {
             running_ = false;
         }
         if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE)) running_ = false;
+        return;
+    }
+
+    if (chatInputActive_) {
+        UpdateChatInput();
+        return;
+    }
+    const Vector2 mousePosition = GetMousePosition();
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        CheckCollisionPointRec(mousePosition, ChatButtonBounds())) {
+        chatPanelVisible_ = !chatPanelVisible_;
+        return;
+    }
+    if (IsKeyPressed(KEY_SLASH)) {
+        OpenChatInput();
+        return;
+    }
+    if (chatPanelVisible_ && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+        CheckCollisionPointRec(mousePosition, ChatInputBounds())) {
+        OpenChatInput();
         return;
     }
 
@@ -734,6 +841,78 @@ void GameClient::Update(float deltaSeconds) {
     playerFacingYaw_ = LerpAngle(playerFacingYaw_, targetFacingYaw, facingBlend);
 
     player_->Update(deltaSeconds, cameraYaw_);
+}
+
+void GameClient::UpdateChatInput() {
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        const Vector2 mousePosition = GetMousePosition();
+        if (CheckCollisionPointRec(mousePosition, ChatButtonBounds())) {
+            chatPanelVisible_ = !chatPanelVisible_;
+            CloseChatInput();
+            return;
+        }
+        if (!CheckCollisionPointRec(mousePosition, ChatInputBounds())) {
+            CloseChatInput();
+            return;
+        }
+    }
+
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        chatInput_.clear();
+        CloseChatInput();
+        return;
+    }
+    if (IsKeyPressed(KEY_BACKSPACE) && !chatInput_.empty()) {
+        std::size_t start = chatInput_.size() - 1;
+        while (start > 0 &&
+               (static_cast<unsigned char>(chatInput_[start]) & 0xC0) == 0x80) {
+            --start;
+        }
+        chatInput_.erase(start);
+    }
+
+    int codepoint = 0;
+    while ((codepoint = GetCharPressed()) > 0) {
+        if (codepoint < 0x20 || codepoint == 0x7F ||
+            (codepoint >= 0xD800 && codepoint <= 0xDFFF) || codepoint > 0x10FFFF) {
+            continue;
+        }
+        std::string candidate = chatInput_;
+        AppendUtf8(candidate, codepoint);
+        if (candidate.size() <= kMaxChatMessageBytes) chatInput_ = std::move(candidate);
+    }
+
+    if (IsKeyPressed(KEY_ENTER)) {
+        if (!chatInput_.empty() && networkClient_.SendChatMessage(chatInput_)) {
+            chatInput_.clear();
+        }
+        CloseChatInput();
+    }
+}
+
+void GameClient::OpenChatInput() {
+    chatPanelVisible_ = true;
+    chatInputActive_ = true;
+    chatReturnToShiftLock_ = shiftLockEnabled_;
+    chatReturnMouseCaptured_ = mouseCaptured_;
+    shiftLockEnabled_ = false;
+    mouseCaptured_ = false;
+    EnableCursor();
+    while (GetCharPressed() > 0) {}
+}
+
+void GameClient::CloseChatInput() {
+    chatInputActive_ = false;
+    if (chatReturnToShiftLock_) {
+        shiftLockEnabled_ = true;
+        mouseCaptured_ = true;
+        DisableCursor();
+    } else {
+        shiftLockEnabled_ = false;
+        mouseCaptured_ = chatReturnMouseCaptured_;
+        if (mouseCaptured_) DisableCursor();
+        else EnableCursor();
+    }
 }
 
 void GameClient::UpdateCamera() {
@@ -1045,6 +1224,8 @@ void GameClient::DrawFrame() {
 
     EndMode3D();
 
+    DrawChatOverlay(font);
+
     // Keep the HUD intentionally quiet: one small FPS number in the top-right.
     const char *fpsText = TextFormat("%d", GetFPS());
     constexpr float hudFontSize = 18.0f;
@@ -1070,4 +1251,131 @@ void GameClient::DrawFrame() {
         DrawDisconnectDialog(font, networkClient_.DisconnectReason());
     }
     EndDrawing();
+}
+
+void GameClient::DrawChatOverlay(const Font *font) {
+    const auto &messages = networkClient_.ChatMessages();
+    const bool showStatus = networkClient_.ChatStatusVisible(GetTime());
+    const Rectangle button = ChatButtonBounds();
+    const bool buttonHovered = CheckCollisionPointRec(GetMousePosition(), button);
+    DrawRectangleRounded(button, 0.16f, 6,
+        buttonHovered ? Color{34, 43, 53, 242} : Color{18, 24, 31, 230});
+    DrawRectangleRoundedLines(button, 0.16f, 6,
+        buttonHovered ? Color{126, 157, 181, 255} : Color{77, 91, 104, 255});
+    if (chatIconTexture_.id != 0) {
+        const Rectangle source{0.0f, 0.0f, static_cast<float>(chatIconTexture_.width),
+                               static_cast<float>(chatIconTexture_.height)};
+        const Rectangle destination{button.x + 10.0f, button.y + 12.0f, 25.0f, 20.0f};
+        DrawTexturePro(chatIconTexture_, source, destination, Vector2{0.0f, 0.0f},
+                       0.0f, WHITE);
+    }
+    DrawTextExSafe(font, "Chat", Vector2{button.x + 43.0f, button.y + 12.0f},
+                   16.0f, 0.3f, Color{241, 245, 248, 255});
+    if (buttonHovered) {
+        const char *tooltip = chatPanelVisible_ ? "Hide chat" : "Show chat";
+        DrawTextExSafe(font, tooltip,
+                       Vector2{button.x + button.width + 10.0f, button.y + 13.0f},
+                       13.0f, 0.2f, Color{218, 226, 233, 255});
+    }
+    if (!chatPanelVisible_) return;
+
+    const Rectangle panel = ChatPanelBounds();
+    DrawRectangleRounded(panel, 0.045f, 8, Color{12, 17, 24, 224});
+    DrawRectangleRoundedLines(panel, 0.045f, 8, Color{81, 99, 115, 230});
+    DrawTextExSafe(font, "Chat", Vector2{panel.x + 16.0f, panel.y + 13.0f},
+                   20.0f, 0.4f, Color{245, 248, 250, 255});
+
+    const char *chatState = networkClient_.SessionId() != 0 ? "CONNECTED" : "OFFLINE";
+    const Color stateColor = networkClient_.SessionId() != 0
+        ? Color{122, 203, 151, 255} : Color{167, 178, 188, 255};
+    const Vector2 stateSize = MeasureTextExSafe(font, chatState, 12.0f, 0.5f);
+    DrawTextExSafe(font, chatState,
+                   Vector2{panel.x + panel.width - 16.0f - stateSize.x, panel.y + 18.0f},
+                   12.0f, 0.5f, stateColor);
+    DrawLine(static_cast<int>(panel.x + 14.0f), static_cast<int>(panel.y + 42.0f),
+             static_cast<int>(panel.x + panel.width - 14.0f),
+             static_cast<int>(panel.y + 42.0f), Color{52, 63, 74, 255});
+
+    constexpr float messageFontSize = 15.0f;
+    constexpr float messageSpacing = 0.3f;
+    constexpr float messageLineHeight = 25.0f;
+    constexpr std::size_t visibleMessages = 8;
+    const std::size_t firstMessage = messages.size() > visibleMessages
+        ? messages.size() - visibleMessages : 0;
+    float lineY = panel.y + 52.0f;
+    if (firstMessage == messages.size()) {
+        const char *emptyText = networkClient_.SessionId() != 0
+            ? "No messages yet. Press / to open chat."
+            : "Join a server to chat.";
+        DrawTextExSafe(font, emptyText, Vector2{panel.x + 16.0f, lineY}, 14.0f, 0.3f,
+                       Color{162, 174, 185, 255});
+    } else {
+        for (std::size_t index = firstMessage; index < messages.size(); ++index) {
+            const ChatMessageSnapshot &message = messages[index];
+            bool senderVerified = false;
+            if (message.senderSessionId == networkClient_.SessionId()) {
+                senderVerified = networkClient_.UserVerified();
+            } else {
+                const auto sender = std::find_if(
+                    networkClient_.Players().begin(), networkClient_.Players().end(),
+                    [&message](const NetworkPlayerSnapshot &player) {
+                        return player.sessionId == message.senderSessionId;
+                    });
+                senderVerified = sender != networkClient_.Players().end() && sender->isVerified;
+            }
+
+            const float nameX = panel.x + 16.0f;
+            const float maxNameWidth = std::min(150.0f, panel.width * 0.36f);
+            const std::string fittedName = FitChatLine(
+                font, message.displayName, maxNameWidth, messageFontSize, messageSpacing);
+            DrawTextExSafe(font, fittedName.c_str(), Vector2{nameX, lineY},
+                           messageFontSize, messageSpacing, Color{231, 238, 248, 240});
+            float textX = nameX +
+                MeasureTextExSafe(font, fittedName.c_str(), messageFontSize, messageSpacing).x + 4.0f;
+            if (senderVerified && verifiedBadgeTexture_.id != 0) {
+                constexpr float badgeSize = 14.0f;
+                const Rectangle source{0.0f, 0.0f,
+                    static_cast<float>(verifiedBadgeTexture_.width),
+                    static_cast<float>(verifiedBadgeTexture_.height)};
+                const Rectangle destination{textX, lineY + 1.0f, badgeSize, badgeSize};
+                DrawTexturePro(verifiedBadgeTexture_, source, destination,
+                               Vector2{0.0f, 0.0f}, 0.0f, WHITE);
+                textX += badgeSize + 4.0f;
+            }
+            const Vector2 colonSize = MeasureTextExSafe(font, ": ", messageFontSize,
+                                                        messageSpacing);
+            DrawTextExSafe(font, ": ", Vector2{textX, lineY}, messageFontSize,
+                           messageSpacing, Color{231, 238, 248, 240});
+            textX += colonSize.x;
+            const std::string fittedText = FitChatLine(
+                font, message.text, std::max(24.0f, panel.x + panel.width - 14.0f - textX),
+                messageFontSize, messageSpacing);
+            DrawTextExSafe(font, fittedText.c_str(), Vector2{textX, lineY},
+                           messageFontSize, messageSpacing, Color{231, 238, 248, 240});
+            lineY += messageLineHeight;
+        }
+    }
+
+    if (showStatus) {
+        DrawTextExSafe(font, networkClient_.ChatStatus().c_str(),
+                       Vector2{panel.x + 16.0f, panel.y + panel.height - 78.0f},
+                       14.0f, 0.3f, Color{255, 190, 126, 245});
+    }
+    const Rectangle input = ChatInputBounds();
+    DrawRectangleRounded(input, 0.12f, 6,
+        chatInputActive_ ? Color{20, 29, 39, 255} : Color{17, 24, 33, 240});
+    DrawRectangleRoundedLines(input, 0.12f, 6,
+        chatInputActive_ ? Color{106, 177, 210, 255} : Color{65, 78, 91, 220});
+    const std::string inputLine = chatInputActive_
+        ? "> " + chatInput_ + "_"
+        : !chatInput_.empty() ? "Draft: " + chatInput_
+        : networkClient_.SessionId() != 0 ? "Press / to chat"
+                                          : "Join a server to chat";
+    const std::string fittedInput = FitChatLine(
+        font, inputLine, input.width - 24.0f, 16.0f, 0.3f);
+    DrawTextExSafe(font, fittedInput.c_str(),
+                   Vector2{input.x + 12.0f, input.y + 10.0f},
+                   16.0f, 0.3f,
+                   chatInputActive_ ? Color{129, 214, 255, 255}
+                                    : Color{156, 176, 199, 220});
 }

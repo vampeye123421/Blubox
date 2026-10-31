@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(BluboxClient VERSION 0.2.24 LANGUAGES C CXX)
+project(BluboxClient VERSION 0.2.26 LANGUAGES C CXX)
 if(WIN32)
     enable_language(RC)
 endif()
@@ -153,6 +153,23 @@ add_custom_command(
     VERBATIM
 )
 target_sources(blubox_client PRIVATE "${BLUBOX_VERIFIED_BADGE_HEADER}")
+
+set(BLUBOX_CHAT_ICON_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxChatIcon.hpp")
+add_custom_command(
+    OUTPUT "${BLUBOX_CHAT_ICON_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/chat-comments.png"
+            "-DOUTPUT_FILE=${BLUBOX_CHAT_ICON_HEADER}"
+            "-DSYMBOL_NAME=kChatIconData"
+            "-DSIZE_SYMBOL_NAME=kChatIconDataSize"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/chat-comments.png"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedBinaryAsHeader.cmake"
+    VERBATIM
+)
+target_sources(blubox_client PRIVATE "${BLUBOX_CHAT_ICON_HEADER}")
 
 # The Studio character geometry is intentionally kept as the visible model.
 # It is animated procedurally because it has no skin or bone hierarchy.

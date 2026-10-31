@@ -22,8 +22,12 @@ public:
 
 private:
     void Update(float deltaSeconds);
+    void UpdateChatInput();
+    void OpenChatInput();
+    void CloseChatInput();
     void UpdateCamera();
     void SyncRemotePlayers(float deltaSeconds);
+    void DrawChatOverlay(const Font *font);
     void DrawFrame();
 
     LaunchOptions options_;
@@ -42,8 +46,11 @@ private:
     Model skyboxModel_{};
     TextureCubemap skyboxCubemap_{};
     Texture2D sunTexture_{};
+    Texture2D verifiedBadgeTexture_{};
+    Texture2D chatIconTexture_{};
     Font uiFont_{};
     std::unordered_map<std::string, Texture2D> nameplateTextures_;
+    std::string chatInput_;
     std::unordered_map<std::uint64_t, std::size_t> playerColorSlots_;
     std::unordered_map<std::uint64_t, JPH::BodyID> remotePlayerBodies_;
     struct SmoothedPlayer {
@@ -74,5 +81,9 @@ private:
     bool mouseCaptured_ = true;
     bool shiftLockEnabled_ = false;
     bool disconnectUiActive_ = false;
+    bool chatInputActive_ = false;
+    bool chatPanelVisible_ = true;
+    bool chatReturnToShiftLock_ = false;
+    bool chatReturnMouseCaptured_ = false;
     bool running_ = true;
 };

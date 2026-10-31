@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <span>
+#include <string_view>
 #include <vector>
 
 // Keep ENet's Windows headers out of public headers: they pull in windows.h,
@@ -48,6 +49,13 @@ struct NetworkPlayerSnapshot {
     float yaw = 0.0f;
 };
 
+struct ChatMessageSnapshot {
+    std::uint64_t sequence = 0;
+    std::uint64_t senderSessionId = 0;
+    std::string displayName;
+    std::string text;
+};
+
 enum class DisconnectKind {
     None,
     ConnectionLost,
@@ -69,8 +77,12 @@ public:
     // Poll with timeout zero so the game loop never waits on the network.
     void Poll();
     void SendPlayerPosition(float x, float y, float z, float yaw);
+    bool SendChatMessage(std::string_view text);
 
     const std::vector<NetworkPlayerSnapshot> &Players() const noexcept { return players_; }
+    const std::vector<ChatMessageSnapshot> &ChatMessages() const noexcept { return chatMessages_; }
+    const std::string &ChatStatus() const noexcept { return chatStatus_; }
+    bool ChatStatusVisible(double now) const noexcept { return !chatStatus_.empty() && now < chatStatusUntil_; }
     const std::string &UserId() const noexcept { return userId_; }
     const NetworkPlayerSnapshot &LocalAvatar() const noexcept { return localAvatar_; }
     std::uint64_t SessionId() const noexcept { return sessionId_; }
@@ -87,12 +99,15 @@ private:
     _ENetPeer *peer_ = nullptr;
     const ClientSession *session_ = nullptr;
     std::string userId_;
+    std::string chatStatus_;
     std::uint64_t sessionId_ = 0;
     bool userVerified_ = false;
     PresenceReporter presenceReporter_;
     std::vector<NetworkPlayerSnapshot> players_;
+    std::vector<ChatMessageSnapshot> chatMessages_;
     NetworkPlayerSnapshot localAvatar_{};
     double nextPositionSendTime_ = 0.0;
+    double chatStatusUntil_ = 0.0;
     bool authenticated_ = false;
     bool enetInitialized_ = false;
     DisconnectKind disconnectKind_ = DisconnectKind::None;

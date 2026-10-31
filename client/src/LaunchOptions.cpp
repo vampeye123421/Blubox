@@ -82,5 +82,5 @@ void PrintUsage(const char *executableName) {
     std::printf("     %s --uninstall-client | --uninstall-studio\n", name);
     std::printf("Guest mode starts the local test scene without connecting to a server.\n");
     std::printf("On Windows, use --register-protocol to register blubox:// for the current user.\n");
-    std::printf("Controls: WASD to move, mouse to look, TAB to capture/release the mouse, ESC to release the mouse, F11 for fullscreen.\n");
+    std::printf("Controls: WASD to move, mouse to look, / to open chat, Enter to send, TAB to capture/release the mouse, ESC to release the mouse, F11 for fullscreen.\n");
 }
