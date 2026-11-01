@@ -28,6 +28,10 @@ ClassId SceneRuntime::mapClass(const studio::Entity& e) {
   if (k == "frame") return ClassId::Frame;
   if (k == "textlabel") return ClassId::TextLabel;
   if (k == "textbutton") return ClassId::TextButton;
+  if (k == "textbox") return ClassId::TextBox;
+  if (k == "imagelabel") return ClassId::ImageLabel;
+  if (k == "imagebutton") return ClassId::ImageButton;
+  if (k == "scrollingframe") return ClassId::ScrollingFrame;
   if (k == "remoteevent") return ClassId::RemoteEvent;
   if (k == "remotefunction") return ClassId::RemoteFunction;
   return ClassId::Folder;
@@ -89,7 +93,8 @@ void SceneRuntime::syncToDocument() {
     e.name = r->name;
     e.color = r->color;
     e.properties["transparency"] = std::clamp(r->transparency, 0.0f, 1.0f);
-    if (r->classId == ClassId::TextLabel || r->classId == ClassId::TextButton) {
+    if (r->classId == ClassId::TextLabel || r->classId == ClassId::TextButton ||
+        r->classId == ClassId::TextBox) {
       e.properties["text"] = r->text;
       e.properties["textColor"] = {r->textColor[0], r->textColor[1], r->textColor[2], 255};
       e.properties["textTransparency"] = std::clamp(r->textTransparency, 0.0f, 1.0f);
@@ -105,8 +110,9 @@ void SceneRuntime::syncToDocument() {
       }
       if (!foundParent) {
         constexpr std::string_view services[] = {"Workspace", "Players", "RunService", "ServerScriptService",
-                                                 "ServerStorage", "ReplicatedStorage", "StarterPlayer", "StarterGui",
-                                                 "Lighting"};
+                                                 "ServerStorage", "ReplicatedStorage", "ReplicatedFirst",
+                                                 "StarterPlayer", "StarterGui", "Lighting", "TweenService", "Debris",
+                                                 "TextService", "CollectionService"};
         for (auto name : services) {
           const auto serviceHandle = registry_.service(name);
           if (serviceHandle.id == r->parent) {

@@ -15,6 +15,22 @@ bool ClientRuntime::initialize(const play::RuntimeSnapshot& snapshot, const play
   if (!snapshot.instantiateWorld(document_, error)) return false;
   try { scene_ = std::make_unique<SceneRuntime>(document_); }
   catch (const std::exception& exception) { error = exception.what(); return false; }
+  auto& instances = scene_->instances();
+  const auto players = instances.service("Players");
+  const auto localPlayer = instances.create(config.playerDisplayName, ClassId::Player, players);
+  const auto playerGui = instances.create("PlayerGui", ClassId::PlayerGui, localPlayer);
+  const auto starterGui = instances.service("StarterGui");
+  if (!localPlayer || !playerGui || !starterGui) {
+    error = "Could not create the local Player and PlayerGui instances.";
+    return false;
+  }
+  for (const auto templateGui : instances.children(starterGui)) {
+    const auto clonedGui = instances.clone(templateGui);
+    if (!clonedGui || !instances.setParent(clonedGui, playerGui)) {
+      error = "Could not clone a StarterGui template into the local PlayerGui.";
+      return false;
+    }
+  }
   predictionPhysics_ = std::make_unique<PhysicsWorld>(scene_->instances());
   for (const auto& entity : document_.entities) {
     const auto handle = scene_->find(entity.id);

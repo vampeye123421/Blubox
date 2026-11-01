@@ -20,6 +20,12 @@ struct InstanceHandle {
 struct Vec3 {
   float x = 0, y = 0, z = 0;
 };
+struct UDim {
+  float scale = 0, offset = 0;
+};
+struct UDim2 {
+  UDim x{}, y{};
+};
 struct Transform {
   Vec3 position{};
   Vec3 rotation{};
@@ -30,6 +36,7 @@ struct WorldTransform {
   std::uint64_t version = 0;
 };
 enum class ClassId : std::uint8_t {
+  DataModel,
   Folder,
   Model,
   Part,
@@ -40,6 +47,10 @@ enum class ClassId : std::uint8_t {
   Frame,
   TextLabel,
   TextButton,
+  TextBox,
+  ImageLabel,
+  ImageButton,
+  ScrollingFrame,
   MeshPart,
   Shirt,
   Pants,
@@ -54,7 +65,9 @@ enum class ClassId : std::uint8_t {
   RemoteFunction,
   Script,
   LocalScript,
-  Service
+  Service,
+  Player,
+  PlayerGui
 };
 enum ComponentBits : std::uint32_t {
   HasTransform = 1u,
@@ -86,6 +99,14 @@ struct InstanceRecord {
   std::array<std::uint8_t, 4> color{75, 163, 226, 255};
   std::uint64_t meshAssetId = 0;
   std::uint64_t materialId = 0;
+  UDim2 uiPosition{};
+  UDim2 uiSize{UDim{0, 100}, UDim{0, 100}};
+  Vec3 uiAnchor{};
+  float uiRotation = 0;
+  std::uint32_t uiZIndex = 1;
+  std::uint32_t uiLayoutOrder = 0;
+  bool uiClipsDescendants = false;
+  std::string imagePath;
 };
 
 class InstanceRegistry {
@@ -93,11 +114,14 @@ class InstanceRegistry {
   InstanceRegistry();
   InstanceHandle create(std::string name, ClassId kind, InstanceHandle parent = {});
   bool destroy(InstanceHandle handle);
+  bool protectedInstance(InstanceHandle handle) const noexcept;
+  InstanceHandle clone(InstanceHandle handle);
   bool alive(InstanceHandle handle) const noexcept;
   InstanceRecord* get(InstanceHandle handle) noexcept;
   const InstanceRecord* get(InstanceHandle handle) const noexcept;
   bool setParent(InstanceHandle child, InstanceHandle parent);
   std::vector<InstanceHandle> children(InstanceHandle parent) const;
+  InstanceHandle root() const noexcept { return root_; }
   InstanceHandle service(std::string_view name) const;
   InstanceHandle handleForId(InstanceId id) const noexcept;
   InstanceHandle findBySourceId(std::string_view sourceId) const noexcept;
@@ -121,6 +145,7 @@ class InstanceRegistry {
   std::vector<InstanceId> dirty_;
   std::vector<InstanceHandle> renderables_;
   std::vector<std::pair<std::string, InstanceHandle>> services_;
+  InstanceHandle root_{};
   std::size_t liveCount_ = 0;
   std::uint64_t worldVersion_ = 0;
 };

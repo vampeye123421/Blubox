@@ -5,7 +5,7 @@ inside `BluboxClient.exe` and `BluboxStudio.exe`; there are no separate launcher
 executables in the release.
 
 The release script builds both CMake targets, stages only the executables, Studio
-fonts, and license notices, then compiles three Inno Setup packages from the single
+fonts, proprietary app licenses, and third-party license notices, then compiles three Inno Setup packages from the single
 existing script `installer/blubox_installer.iss`:
 
 - `dist/child-installers/Blubox-Client-Setup-<client-version>.exe` installs Client only.
@@ -16,7 +16,17 @@ existing script `installer/blubox_installer.iss`:
 The two child installers use separate Inno Setup AppIds and per-user install
 directories under `%LOCALAPPDATA%\Programs\Blubox`. Their Start Menu/Desktop links,
 protocol registrations, and updater caches are removed by that product's own
-uninstaller. Removing Client leaves Studio installed and vice versa.
+uninstaller. Each installs its proprietary `LICENSE.txt` in the application root
+and keeps third-party license notices in the separate `licenses` directory.
+Removing Client leaves Studio installed and vice versa.
+
+Each child installer requires acceptance of its product's proprietary license
+before installation. The combined setup presents both agreements before it
+silently installs either child package. Accepted license versions and local
+timestamps are recorded under
+`HKCU\Software\Blubox\Legal\Client` and
+`HKCU\Software\Blubox\Legal\Studio`; each product's uninstaller removes its
+own acceptance records.
 
 ## Build on Windows
 

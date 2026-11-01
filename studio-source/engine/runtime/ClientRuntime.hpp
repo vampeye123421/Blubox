@@ -7,6 +7,7 @@
 #include "../play/RuntimeSnapshot.hpp"
 #include "../input/InputCommand.hpp"
 #include "../script/ScriptRuntime.hpp"
+#include "../ui/UiRuntimeBridge.hpp"
 #include <memory>
 #include <string>
 namespace blubox::engine::runtime {
@@ -22,6 +23,9 @@ class ClientRuntime {
   [[nodiscard]] const std::string& networkDiagnostic() const noexcept { return remote_.lastDiagnostic(); }
   network::RemoteManager& remoteManager() noexcept { return remote_; }
   const SceneRuntime* scene() const noexcept { return scene_.get(); }
+  ui::UiDrawList resolveUi(ui::Vec2 viewport) {
+    return scene_ ? uiBridge_.resolve(scene_->instances(), viewport) : ui::UiDrawList{};
+  }
   const studio::MapDocument& document() const noexcept { return document_; }
  private:
   bool transmitInput(const input::InputCommand& command);
@@ -33,6 +37,7 @@ class ClientRuntime {
   std::unique_ptr<PhysicsWorld> predictionPhysics_;
   InstanceHandle localCharacter_{};
   replication::NetworkId localCharacterNetworkId_ = 0;
+  ui::UiRuntimeBridge uiBridge_;
   input::InputCommand latestInput_{};
   double inputSendAccumulator_ = 0.0;
   bool initialized_ = false;

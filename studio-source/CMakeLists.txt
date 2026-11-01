@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(BluboxStudio VERSION 0.1.13 LANGUAGES C CXX)
+project(BluboxStudio VERSION 0.1.14 LANGUAGES C CXX)
 if(WIN32)
   enable_language(RC)
 endif()
@@ -135,7 +135,8 @@ target_sources(blubox_studio PRIVATE
   engine/play/RuntimeSnapshot.cpp engine/play/PlayModeBridge.cpp engine/play/SpawnService.cpp
   engine/runtime/ServerRuntime.cpp engine/runtime/ClientRuntime.cpp
   engine/script/ScriptRuntime.cpp
-  engine/ui/UiScene.cpp engine/ui/UiLayoutResolver.cpp engine/ui/backends/RaylibUiRenderer.cpp
+  engine/ui/UiScene.cpp engine/ui/UiLayoutResolver.cpp engine/ui/UiRuntimeBridge.cpp
+  engine/ui/backends/RaylibUiRenderer.cpp
   engine/network/EnetTransport.cpp engine/network/RemoteManager.cpp
   engine/network/RemoteRegistry.cpp engine/network/RemoteFunctionManager.cpp
   engine/network/ReplayGuard.cpp engine/network/RateLimiter.cpp)

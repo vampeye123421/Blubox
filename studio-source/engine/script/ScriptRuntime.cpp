@@ -12,12 +12,16 @@
 namespace blubox::engine::script {
 namespace {
 constexpr std::size_t kMaxScriptBytes = 256 * 1024;
-constexpr std::array<std::string_view, 7> kServerServices{
-  "Workspace", "Players", "ReplicatedStorage", "ServerScriptService", "ServerStorage", "RunService", "Lighting"};
-constexpr std::array<std::string_view, 6> kClientServices{
-  "Workspace", "Players", "ReplicatedStorage", "StarterGui", "StarterPlayer", "RunService"};
-constexpr std::array<std::string_view, 4> kSharedServices{
-  "Workspace", "Players", "ReplicatedStorage", "RunService"};
+constexpr std::array<std::string_view, 14> kServerServices{
+  "Workspace", "Players", "ReplicatedStorage", "ReplicatedFirst", "ServerScriptService", "ServerStorage",
+  "StarterPlayer", "StarterGui", "RunService", "Lighting", "TweenService", "Debris", "TextService",
+  "CollectionService"};
+constexpr std::array<std::string_view, 11> kClientServices{
+  "Workspace", "Players", "ReplicatedStorage", "ReplicatedFirst", "StarterGui", "StarterPlayer", "RunService",
+  "TweenService", "Debris", "TextService", "CollectionService"};
+constexpr std::array<std::string_view, 9> kSharedServices{
+  "Workspace", "Players", "ReplicatedStorage", "ReplicatedFirst", "RunService", "TweenService", "Debris",
+  "CollectionService", "TextService"};
 }
 ScriptRuntime::ScriptRuntime(ScriptContext context, InstanceRegistry& instances,
                              std::function<void(std::string)> onError)
@@ -86,7 +90,9 @@ void ScriptRuntime::installGameApi(lua_State* thread, ScriptContext context) {
   lua_pushinteger(thread, static_cast<int>(context));
   lua_pushcclosure(thread, getService, "game.GetService", 2);
   lua_setfield(thread, -2, "GetService");
-  constexpr std::string_view services[]={"Workspace","Players","ReplicatedStorage","ServerScriptService","ServerStorage","StarterPlayer","StarterGui","Lighting","RunService"};
+  constexpr std::string_view services[]={"Workspace","Players","ReplicatedStorage","ReplicatedFirst",
+      "ServerScriptService","ServerStorage","StarterPlayer","StarterGui","Lighting","RunService","TweenService",
+      "Debris","TextService","CollectionService"};
   for(auto name:services){
     if(!allowedService(context,name))continue;
     auto handle=instances_.service(name);
@@ -124,7 +130,9 @@ bool ScriptRuntime::load(const std::vector<ScriptAsset>& assets, std::string& er
     if (remoteBinding_) {
       std::vector<std::pair<std::string,bool>> remotes;
       std::vector<InstanceHandle> pending;
-      constexpr std::string_view services[]={"Workspace","ServerScriptService","ServerStorage","ReplicatedStorage","StarterPlayer","StarterGui","Lighting"};
+      constexpr std::string_view services[]={"Workspace","ServerScriptService","ServerStorage","ReplicatedStorage",
+          "ReplicatedFirst","StarterPlayer","StarterGui","Lighting","TweenService","Debris","TextService",
+          "CollectionService"};
       for(auto service:services){auto root=instances_.service(service);if(root)pending.push_back(root);}
       while(!pending.empty()){
         auto parent=pending.back();pending.pop_back();
@@ -172,6 +180,7 @@ void ScriptRuntime::tick(double dt) {
   scheduler_->fireEvent("Stepped", dt);
   scheduler_->tick(scheduler_->now() + std::clamp(dt, 0.0, 0.25));
   scheduler_->fireEvent("Heartbeat", dt);
+  LuaInstanceBinding::tickServices(state_);
   deadline_ = std::chrono::steady_clock::time_point::max();
 }
 void ScriptRuntime::queueTouched(InstanceHandle part, InstanceHandle otherPart) {

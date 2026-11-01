@@ -2058,7 +2058,7 @@ void DrawPublishDialog(StudioState& state) {
     ImGui::OpenPopup("Publish game to Blubox");
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(600.0f, 470.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(600.0f, 550.0f), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Publish game to Blubox", &state.showPublishDialog,
                                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
         ImGui::TextColored(Rgb(0x00d2ff), "PUBLISH YOUR GAME");
@@ -2113,6 +2113,15 @@ void DrawPublishDialog(StudioState& state) {
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::InputTextMultiline("##PublishGameDescription", &state.publishDescription, ImVec2(-1.0f, 104.0f));
         ImGui::TextDisabled("%zu / 1000 characters", state.publishDescription.size());
+        ImGui::Spacing();
+        ImGui::TextDisabled("GAME ARTWORK - uploads coming soon");
+        ImGui::BeginDisabled();
+        const float artworkSlotWidth =
+            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        ImGui::Button("Game banner (coming soon)", ImVec2(artworkSlotWidth, 46.0f));
+        ImGui::SameLine();
+        ImGui::Button("Game icon (coming soon)", ImVec2(artworkSlotWidth, 46.0f));
+        ImGui::EndDisabled();
         if (!state.publishError.empty()) {
             ImGui::Spacing();
             ImGui::TextWrapped("%s", state.publishError.c_str());

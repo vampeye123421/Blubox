@@ -37,10 +37,13 @@ M localMatrix(const Transform& t) {
 }  // namespace
 
 InstanceRegistry::InstanceRegistry() {
+  root_ = create("game", ClassId::DataModel);
   constexpr std::string_view names[] = {"Workspace", "Players", "RunService", "ServerScriptService",
-                                        "ServerStorage", "ReplicatedStorage", "StarterPlayer", "StarterGui", "Lighting"};
+                                        "ServerStorage", "ReplicatedStorage", "ReplicatedFirst", "StarterPlayer",
+                                        "StarterGui", "Lighting", "TweenService", "Debris", "TextService",
+                                        "CollectionService"};
   for (auto name : names) {
-    auto h = create(std::string(name), ClassId::Service);
+    auto h = create(std::string(name), ClassId::Service, root_);
     services_.emplace_back(name, h);
   }
 }
@@ -67,8 +70,10 @@ InstanceHandle InstanceRegistry::create(std::string name, ClassId kind, Instance
   if (kind == ClassId::Model) s.value.componentMask |= HasTransform;
   if (kind == ClassId::Script || kind == ClassId::LocalScript) s.value.componentMask |= HasScript;
   if (kind == ClassId::ScreenGui || kind == ClassId::Frame || kind == ClassId::TextLabel ||
-      kind == ClassId::TextButton || kind == ClassId::UIListLayout || kind == ClassId::UIGridLayout ||
-      kind == ClassId::UIPadding)
+      kind == ClassId::TextButton || kind == ClassId::TextBox || kind == ClassId::ImageLabel ||
+      kind == ClassId::ImageButton || kind == ClassId::ScrollingFrame ||
+      kind == ClassId::UIListLayout || kind == ClassId::UIGridLayout ||
+      kind == ClassId::UIPadding || kind == ClassId::PlayerGui)
     s.value.componentMask |= HasUi;
   if (kind == ClassId::RemoteEvent || kind == ClassId::RemoteFunction) s.value.componentMask |= HasNetwork;
   if ((s.value.componentMask & HasRenderable) != 0) renderables_.push_back({id, s.generation});
@@ -100,6 +105,8 @@ bool InstanceRegistry::isAncestor(InstanceId candidate, InstanceId node) const {
 }
 bool InstanceRegistry::setParent(InstanceHandle child, InstanceHandle parent) {
   if (!alive(child) || (parent && !alive(parent)) || (parent && isAncestor(child.id, parent.id))) return false;
+  if (child == root_ || (get(child)->classId == ClassId::Service && parent != root_)) return false;
+  if (get(child)->parent == (parent ? parent.id : UINT32_MAX)) return true;
   unlink(child.id);
   if (parent) {
     auto& c = slots_[child.id].value;
@@ -120,6 +127,58 @@ std::vector<InstanceHandle> InstanceRegistry::children(InstanceHandle p) const {
   for (auto id = r->firstChild; id != UINT32_MAX; id = slots_[id].value.nextSibling)
     out.push_back({id, slots_[id].generation});
   return out;
+}
+InstanceHandle InstanceRegistry::clone(InstanceHandle source) {
+  if (!alive(source) || protectedInstance(source)) return {};
+  const auto copyRecord = [this](InstanceHandle sourceHandle, InstanceHandle parent) {
+    const auto* original = get(sourceHandle);
+    if (!original) return InstanceHandle{};
+    const auto originalValue = *original;
+    const auto copy = create(originalValue.name, originalValue.classId, parent);
+    auto* cloned = get(copy);
+    if (!cloned) return InstanceHandle{};
+    cloned->local = originalValue.local;
+    cloned->anchored = originalValue.anchored;
+    cloned->visible = originalValue.visible;
+    cloned->enabled = originalValue.enabled;
+    cloned->duration = originalValue.duration;
+    cloned->transparency = originalValue.transparency;
+    cloned->text = originalValue.text;
+    cloned->textColor = originalValue.textColor;
+    cloned->textTransparency = originalValue.textTransparency;
+    cloned->brightness = originalValue.brightness;
+    cloned->source = originalValue.source;
+    cloned->size = originalValue.size;
+    cloned->color = originalValue.color;
+    cloned->meshAssetId = originalValue.meshAssetId;
+    cloned->materialId = originalValue.materialId;
+    cloned->uiPosition = originalValue.uiPosition;
+    cloned->uiSize = originalValue.uiSize;
+    cloned->uiAnchor = originalValue.uiAnchor;
+    cloned->uiRotation = originalValue.uiRotation;
+    cloned->uiZIndex = originalValue.uiZIndex;
+    cloned->uiLayoutOrder = originalValue.uiLayoutOrder;
+    cloned->uiClipsDescendants = originalValue.uiClipsDescendants;
+    cloned->imagePath = originalValue.imagePath;
+    markTransformDirty(copy);
+    return copy;
+  };
+  const auto result = copyRecord(source, {});
+  if (!result) return {};
+  std::vector<std::pair<InstanceHandle, InstanceHandle>> pending{{source, result}};
+  while (!pending.empty()) {
+    const auto [originalParent, clonedParent] = pending.back();
+    pending.pop_back();
+    for (const auto originalChild : children(originalParent)) {
+      const auto clonedChild = copyRecord(originalChild, clonedParent);
+      if (!clonedChild) {
+        destroy(result);
+        return {};
+      }
+      pending.emplace_back(originalChild, clonedChild);
+    }
+  }
+  return result;
 }
 InstanceHandle InstanceRegistry::service(std::string_view n) const {
   for (const auto& [name, h] : services_)
@@ -180,6 +239,7 @@ void InstanceRegistry::flushTransforms() {
 }
 bool InstanceRegistry::destroy(InstanceHandle h) {
   if (!alive(h)) return false;
+  if (protectedInstance(h)) return false;
   std::vector<InstanceId> pending{h.id};
   std::vector<InstanceId> subtree;
   while (!pending.empty()) {
@@ -204,5 +264,9 @@ bool InstanceRegistry::destroy(InstanceHandle h) {
     --liveCount_;
   }
   return true;
+}
+bool InstanceRegistry::protectedInstance(InstanceHandle h) const noexcept {
+  return h == root_ || std::any_of(services_.begin(), services_.end(),
+                                   [h](const auto& entry) { return entry.second == h; });
 }
 }  // namespace blubox::engine

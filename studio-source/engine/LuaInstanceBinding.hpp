@@ -12,5 +12,6 @@ public:
   static void push(lua_State *state, InstanceHandle handle);
   static bool read(lua_State *state, int index, InstanceHandle &out);
   static void fireTouched(lua_State *state, InstanceHandle part, InstanceHandle otherPart);
+  static void tickServices(lua_State *state);
 };
 } // namespace blubox::engine

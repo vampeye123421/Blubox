@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "../EngineCore.hpp"
 
 namespace blubox::engine::ui {
 
@@ -17,8 +18,8 @@ struct InstanceHandle {
 struct Vec2 { float x = 0.0f, y = 0.0f; };
 struct Rect { Vec2 position{}, size{}; };
 struct Color { std::uint8_t r=255, g=255, b=255, a=255; };
-struct UDim { float scale=0.0f, offset=0.0f; };
-struct UDim2 { UDim x{}, y{}; };
+using UDim = blubox::engine::UDim;
+using UDim2 = blubox::engine::UDim2;
 
 inline Vec2 resolve(const UDim2& v, Vec2 parent) noexcept {
   return {v.x.scale * parent.x + v.x.offset,
