@@ -1,0 +1,11 @@
+PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2026 Blubox. All rights reserved.
+
+This software (including the Blubox Client, Blubox Studio, and all associated binaries, assets, and files) is proprietary and protected by international copyright laws.
+
+Permission is hereby granted to download, install, and execute this software solely for personal, non-commercial use to connect to official Blubox platform services.
+
+You may not modify, copy, distribute, sublicense, sell, decompile, disassemble, or reverse-engineer any part of this software, except and only to the extent that such activity is expressly permitted by applicable law (such as mandatory reverse-engineering rights for interoperability under European Union law).
+
+This license remains fully applicable to this software under its current name and across any future corporate restructuring, rebranding, or project name changes.

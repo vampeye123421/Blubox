@@ -76,6 +76,8 @@ $clientExe = Find-BuiltExecutable $ClientBuildDir 'blubox_client.exe'
 $launcherExe = Find-BuiltExecutable $ClientBuildDir 'blubox_launcher.exe'
 $studioLauncherExe = Find-BuiltExecutable $ClientBuildDir 'blubox_studio_launcher.exe'
 $studioExe = Find-BuiltExecutable $StudioBuildDir 'blubox_studio.exe'
+$clientLicense = Join-Path $ClientRoot 'LICENSE.txt'
+$studioLicense = Join-Path $StudioRoot 'LICENSE'
 $fontDir = Join-Path $StudioRoot 'assets\editor\fonts'
 $clientDependencyLicenses = @(
     @{ Source = (Join-Path $ClientRoot 'assets\icons\ATTRIBUTION.txt'); Name = 'FontAwesome-Comments-ATTRIBUTION.txt' },
@@ -97,7 +99,8 @@ $requiredFiles = @(
     (Join-Path $fontDir 'JetBrainsMono-LICENSE.txt'),
     (Join-Path $StudioRoot 'studio\third_party\ImGuiColorTextEdit\LICENSE'),
     (Join-Path $StudioRoot 'THIRD_PARTY_LICENSES.md'),
-    (Join-Path $StudioRoot 'LICENSE')
+    $studioLicense,
+    $clientLicense
 ) + @($clientDependencyLicenses | ForEach-Object { $_.Source })
 $missing = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_) })
 if ($missing.Count) { throw "Release inputs missing:`n$($missing -join "`n")" }
@@ -122,6 +125,26 @@ Copy-Item -LiteralPath $clientExe -Destination (Join-Path $staging 'BluboxClient
 Copy-Item -LiteralPath $launcherExe -Destination (Join-Path $staging 'BluboxLauncher.exe')
 Copy-Item -LiteralPath $studioLauncherExe -Destination (Join-Path $staging 'BluboxStudioLauncher.exe')
 Copy-Item -LiteralPath $studioExe -Destination (Join-Path $staging 'BluboxStudio.exe')
+Copy-Item -LiteralPath $clientLicense -Destination (Join-Path $staging 'BluboxClient-LICENSE.txt')
+Copy-Item -LiteralPath $studioLicense -Destination (Join-Path $staging 'BluboxStudio-LICENSE.txt')
+$clientLicenseText = (Get-Content -LiteralPath $clientLicense -Raw).Trim()
+$studioLicenseText = (Get-Content -LiteralPath $studioLicense -Raw).Trim()
+$bundleLicenseText = @"
+BLUBOX CLIENT AND STUDIO LICENSE AGREEMENT
+
+CLIENT LICENSE
+
+$clientLicenseText
+
+STUDIO LICENSE
+
+$studioLicenseText
+"@
+[System.IO.File]::WriteAllText(
+    (Join-Path $staging 'Blubox-Bundle-LICENSE.txt'),
+    $bundleLicenseText + [Environment]::NewLine,
+    [System.Text.UTF8Encoding]::new($false)
+)
 Copy-Item -LiteralPath (Join-Path $StudioRoot 'assets\editor\luau_api_catalog.json') -Destination (Join-Path $staging 'assets\editor\luau_api_catalog.json')
 Copy-Item -LiteralPath (Join-Path $fontDir 'InterVariable.ttf') -Destination (Join-Path $staging 'assets\editor\fonts\InterVariable.ttf')
 Copy-Item -LiteralPath (Join-Path $fontDir 'JetBrainsMono-Regular.ttf') -Destination (Join-Path $staging 'assets\editor\fonts\JetBrainsMonoRegular.ttf')
