@@ -272,7 +272,9 @@ add_custom_command(TARGET blubox_studio POST_BUILD
     "$<TARGET_FILE_DIR:blubox_studio>/assets/editor/fonts/JetBrainsMonoRegular.ttf"
   VERBATIM)
 
-install(TARGETS blubox_studio RUNTIME DESTINATION .)
+install(TARGETS blubox_studio
+  RUNTIME DESTINATION .
+  BUNDLE DESTINATION .)
 install(FILES
   assets/editor/luau_api_catalog.json
   DESTINATION assets/editor)
