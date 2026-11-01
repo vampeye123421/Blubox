@@ -86,7 +86,8 @@ jobs:
           echo "CCACHE_MAXSIZE=5G" >> "$GITHUB_ENV"
 
       - name: Restore compiler cache
-        uses: actions/cache@v5
+        id: restore-compiler-cache
+        uses: actions/cache/restore@v5
         with:
           path: ${{ runner.temp }}/blubox-ccache
           key: macos-15-universal-ccache-main-${{ github.run_id }}
@@ -147,3 +148,10 @@ jobs:
       - name: Show compiler cache statistics
         if: always()
         run: ccache --show-stats
+
+      - name: Save compiler cache
+        if: always() && steps.restore-compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/blubox-ccache
+          key: ${{ steps.restore-compiler-cache.outputs.cache-primary-key }}

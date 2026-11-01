@@ -243,7 +243,11 @@ std::wstring GetCurrentExecutablePath() {
 #endif
 
 void RegisterBluboxProtocolForCurrentUser() {
+#ifdef _WIN32
     RegisterBluboxProtocolForCurrentUser(std::filesystem::path(GetCurrentExecutablePath()));
+#else
+    throw std::runtime_error("Registering the blubox:// protocol is available only on Windows.");
+#endif
 }
 
 void RegisterBluboxProtocolForCurrentUser(const std::filesystem::path &launcherExecutable) {
