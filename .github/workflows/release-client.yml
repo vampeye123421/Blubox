@@ -30,7 +30,8 @@ jobs:
         shell: pwsh
         run: |
           "CCACHE_DIR=$env:RUNNER_TEMP\blubox-ccache" >> $env:GITHUB_ENV
-          "CCACHE_MAXSIZE=3G" >> $env:GITHUB_ENV
+          "CCACHE_COMPILERCHECK=content" >> $env:GITHUB_ENV
+          "CCACHE_MAXSIZE=5G" >> $env:GITHUB_ENV
 
       - name: Restore compiler cache
         uses: actions/cache@v5
@@ -59,7 +60,7 @@ jobs:
         shell: pwsh
         run: |
           $version = '${{ github.ref_name }}'.TrimStart('v')
-          ./studio-source/tools/release/Build-Release.ps1 -ClientRoot ./client -ClientBuildDir ./build -StudioRoot ./studio-source -StudioBuildDir ./studio-build -AppVersion $version -BuildParallelism 2
+          ./studio-source/tools/release/Build-Release.ps1 -ClientRoot ./client -ClientBuildDir ./build -StudioRoot ./studio-source -StudioBuildDir ./studio-build -AppVersion $version -BuildParallelism 4
           $studioProject = Get-Content './studio-source/CMakeLists.txt' -Raw
           if ($studioProject -notmatch 'project\(BluboxStudio VERSION ([0-9]+(?:\.[0-9]+){1,3})') { throw 'Studio version missing from studio-source/CMakeLists.txt.' }
           "studio_version=$($Matches[1])" >> $env:GITHUB_OUTPUT
@@ -180,11 +181,37 @@ jobs:
             });
 
   macos:
-    needs: windows
     runs-on: macos-15
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      studio_version: ${{ steps.package.outputs.studio_version }}
+      archive_sha256: ${{ steps.checksums.outputs.archive }}
+      client_sha256: ${{ steps.checksums.outputs.client }}
+      launcher_sha256: ${{ steps.checksums.outputs.launcher }}
+      studio_sha256: ${{ steps.checksums.outputs.studio }}
+      studio_launcher_sha256: ${{ steps.checksums.outputs.studio_launcher }}
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+
+      - name: Set up compiler cache
+        shell: bash
+        run: |
+          if ! command -v ccache >/dev/null 2>&1; then
+            brew install ccache
+          fi
+          echo "CCACHE_DIR=$RUNNER_TEMP/blubox-ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=5G" >> "$GITHUB_ENV"
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/blubox-ccache
+          key: macos-15-universal-ccache-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            macos-15-universal-ccache-v
+            macos-15-universal-ccache-
 
       - name: Create app icons
         shell: bash
@@ -216,6 +243,10 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
 
       - name: Configure Studio
         run: >-
@@ -223,13 +254,21 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
 
       - name: Build macOS apps and runtime payloads
         run: |
-          cmake --build build --parallel 2 --target blubox_client blubox_launcher blubox_studio_launcher
-          cmake --build studio-build --parallel 2 --target blubox_studio
+          cmake --build build --parallel 3 --target blubox_client blubox_launcher blubox_studio_launcher
+          cmake --build studio-build --parallel 3 --target blubox_studio
 
-      - name: Package separate app bundles
+      - name: Show compiler cache statistics
+        if: always()
+        run: ccache --show-stats
+
+      - name: Package combined app bundle
         id: package
         shell: bash
         run: |
@@ -239,13 +278,19 @@ jobs:
             echo "Studio version missing from studio-source/CMakeLists.txt." >&2
             exit 1
           fi
-          ditto -c -k --sequesterRsrc --keepParent "build/Blubox Client.app" "$RUNNER_TEMP/BluboxClient-macOS-universal.zip"
-          ditto -c -k --sequesterRsrc --keepParent "studio-build/Blubox Studio.app" "$RUNNER_TEMP/BluboxStudio-macOS-universal.zip"
-          mkdir -p "$RUNNER_TEMP/blubox-macos-runtime"
-          cp "build/blubox_client" "$RUNNER_TEMP/blubox-macos-runtime/BluboxClient-macOS-universal"
-          cp "build/Blubox Client.app/Contents/MacOS/Blubox Client" "$RUNNER_TEMP/blubox-macos-runtime/BluboxLauncher-macOS-universal"
-          cp "studio-build/Blubox Studio.app/Contents/MacOS/Blubox Studio" "$RUNNER_TEMP/blubox-macos-runtime/BluboxStudio-macOS-universal"
-          cp "build/blubox_studio_launcher" "$RUNNER_TEMP/blubox-macos-runtime/BluboxStudioLauncher-macOS-universal"
+          assets="$RUNNER_TEMP/macos-release-assets"
+          bundle_dir="$RUNNER_TEMP/Blubox for macOS"
+          runtime_dir="$assets/runtime"
+          mkdir -p "$bundle_dir" "$runtime_dir"
+          ditto "build/Blubox Client.app" "$bundle_dir/Blubox Client.app"
+          ditto "studio-build/Blubox Studio.app" "$bundle_dir/Blubox Studio.app"
+          ditto -c -k --sequesterRsrc --keepParent "$bundle_dir" "$assets/Blubox-macOS-universal.zip"
+          unzip -Z1 "$assets/Blubox-macOS-universal.zip" | grep -Fx "Blubox for macOS/Blubox Client.app/Contents/Info.plist"
+          unzip -Z1 "$assets/Blubox-macOS-universal.zip" | grep -Fx "Blubox for macOS/Blubox Studio.app/Contents/Info.plist"
+          cp "build/blubox_client" "$runtime_dir/BluboxClient-macOS-universal"
+          cp "build/Blubox Client.app/Contents/MacOS/Blubox Client" "$runtime_dir/BluboxLauncher-macOS-universal"
+          cp "studio-build/Blubox Studio.app/Contents/MacOS/Blubox Studio" "$runtime_dir/BluboxStudio-macOS-universal"
+          cp "build/blubox_studio_launcher" "$runtime_dir/BluboxStudioLauncher-macOS-universal"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "studio_version=$studio_version" >> "$GITHUB_OUTPUT"
 
@@ -253,39 +298,57 @@ jobs:
         id: checksums
         shell: bash
         run: |
-          runtime="$RUNNER_TEMP/blubox-macos-runtime"
+          echo "archive=$(shasum -a 256 "$RUNNER_TEMP/macos-release-assets/Blubox-macOS-universal.zip" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          runtime="$RUNNER_TEMP/macos-release-assets/runtime"
           echo "client=$(shasum -a 256 "$runtime/BluboxClient-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           echo "launcher=$(shasum -a 256 "$runtime/BluboxLauncher-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           echo "studio=$(shasum -a 256 "$runtime/BluboxStudio-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           echo "studio_launcher=$(shasum -a 256 "$runtime/BluboxStudioLauncher-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
-      - name: Publish macOS app bundles and runtime payloads
+      - name: Upload macOS release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-assets
+          path: ${{ runner.temp }}/macos-release-assets/
+          compression-level: 0
+
+  publish-macos:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download macOS release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release-assets
+          path: ${{ runner.temp }}/macos-release-assets
+
+      - name: Publish macOS app bundle and runtime payloads
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           gh release upload "v$version" \
-            "$RUNNER_TEMP/BluboxClient-macOS-universal.zip" \
-            "$RUNNER_TEMP/BluboxStudio-macOS-universal.zip" \
+            "$RUNNER_TEMP/macos-release-assets/Blubox-macOS-universal.zip" \
             --repo "${{ github.repository }}" \
             --clobber
           gh release upload "runtime-v$version" \
-            "$RUNNER_TEMP/blubox-macos-runtime/BluboxClient-macOS-universal" \
-            "$RUNNER_TEMP/blubox-macos-runtime/BluboxLauncher-macOS-universal" \
-            "$RUNNER_TEMP/blubox-macos-runtime/BluboxStudio-macOS-universal" \
-            "$RUNNER_TEMP/blubox-macos-runtime/BluboxStudioLauncher-macOS-universal" \
+            "$RUNNER_TEMP/macos-release-assets/runtime/BluboxClient-macOS-universal" \
+            "$RUNNER_TEMP/macos-release-assets/runtime/BluboxLauncher-macOS-universal" \
+            "$RUNNER_TEMP/macos-release-assets/runtime/BluboxStudio-macOS-universal" \
+            "$RUNNER_TEMP/macos-release-assets/runtime/BluboxStudioLauncher-macOS-universal" \
             --repo "${{ github.repository }}" \
             --clobber
 
       - name: Publish macOS updater manifests
         uses: actions/github-script@v8
         env:
-          CLIENT_SHA256: ${{ steps.checksums.outputs.client }}
-          CLIENT_LAUNCHER_SHA256: ${{ steps.checksums.outputs.launcher }}
-          STUDIO_SHA256: ${{ steps.checksums.outputs.studio }}
-          STUDIO_LAUNCHER_SHA256: ${{ steps.checksums.outputs.studio_launcher }}
-          STUDIO_VERSION: ${{ steps.package.outputs.studio_version }}
+          ARCHIVE_SHA256: ${{ needs.macos.outputs.archive_sha256 }}
+          CLIENT_SHA256: ${{ needs.macos.outputs.client_sha256 }}
+          CLIENT_LAUNCHER_SHA256: ${{ needs.macos.outputs.launcher_sha256 }}
+          STUDIO_SHA256: ${{ needs.macos.outputs.studio_sha256 }}
+          STUDIO_LAUNCHER_SHA256: ${{ needs.macos.outputs.studio_launcher_sha256 }}
+          STUDIO_VERSION: ${{ needs.macos.outputs.studio_version }}
         with:
           script: |
             const version = context.ref.replace('refs/tags/v', '');
@@ -298,6 +361,8 @@ jobs:
             const manifest = JSON.parse(Buffer.from(current.data.content, 'base64').toString('utf8'));
             manifest.platforms ??= {};
             manifest.platforms.macos = {
+              archiveDownloadUrl: `https://github.com/${owner}/${repo}/releases/download/v${version}/Blubox-macOS-universal.zip`,
+              archiveSha256: process.env.ARCHIVE_SHA256,
               downloadUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxClient-macOS-universal`,
               sha256: process.env.CLIENT_SHA256,
               launcherVersion: version,

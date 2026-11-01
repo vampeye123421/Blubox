@@ -1,0 +1,149 @@
+name: Warm Blubox release build caches
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-cache:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up MinGW toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-ccache
+
+      - name: Set compiler cache location
+        shell: pwsh
+        run: |
+          "CCACHE_DIR=$env:RUNNER_TEMP\blubox-ccache" >> $env:GITHUB_ENV
+          "CCACHE_COMPILERCHECK=content" >> $env:GITHUB_ENV
+          "CCACHE_MAXSIZE=5G" >> $env:GITHUB_ENV
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/blubox-ccache
+          key: ${{ runner.os }}-ucrt64-ccache-main-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-ucrt64-ccache-main-
+            ${{ runner.os }}-ucrt64-ccache-
+
+      - name: Configure Client
+        shell: msys2 {0}
+        run: >-
+          cmake -S client -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Configure Studio
+        shell: msys2 {0}
+        run: >-
+          cmake -S studio-source -B studio-build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build Windows apps
+        shell: msys2 {0}
+        run: |
+          cmake --build build --parallel 4 --target blubox_client blubox_launcher blubox_studio_launcher
+          cmake --build studio-build --parallel 4 --target blubox_studio
+
+      - name: Show compiler cache statistics
+        if: always()
+        shell: msys2 {0}
+        run: ccache --show-stats
+
+  macos-cache:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up compiler cache
+        shell: bash
+        run: |
+          if ! command -v ccache >/dev/null 2>&1; then
+            brew install ccache
+          fi
+          echo "CCACHE_DIR=$RUNNER_TEMP/blubox-ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=5G" >> "$GITHUB_ENV"
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/blubox-ccache
+          key: macos-15-universal-ccache-main-${{ github.run_id }}
+          restore-keys: |
+            macos-15-universal-ccache-main-
+            macos-15-universal-ccache-
+
+      - name: Create app icons
+        shell: bash
+        run: |
+          mkdir -p build studio-build
+          make_icon() {
+            source="$1"
+            output="$2"
+            iconset="${output%.icns}.iconset"
+            mkdir -p "$iconset"
+            for size in 16 32 128 256 512 1024; do
+              sips -z "$size" "$size" "$source" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+            done
+            for size in 16 32 128 256; do
+              double_size=$((size * 2))
+              sips -z "$double_size" "$double_size" "$source" \
+                --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+            done
+            mv "$iconset/icon_1024x1024.png" "$iconset/icon_512x512@2x.png"
+            iconutil -c icns "$iconset" -o "$output"
+          }
+          make_icon client/assets/bloxity-icon.png build/AppIcon.icns
+          make_icon studio-source/assets/branding/bloxity-icon.png studio-build/AppIcon.icns
+
+      - name: Configure Client
+        run: >-
+          cmake -S client -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+
+      - name: Configure Studio
+        run: >-
+          cmake -S studio-source -B studio-build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJC_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build macOS apps
+        run: |
+          cmake --build build --parallel 3 --target blubox_client blubox_launcher blubox_studio_launcher
+          cmake --build studio-build --parallel 3 --target blubox_studio
+
+      - name: Show compiler cache statistics
+        if: always()
+        run: ccache --show-stats

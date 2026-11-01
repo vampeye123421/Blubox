@@ -3,7 +3,7 @@ project(BluboxStudio VERSION 0.1.14 LANGUAGES C CXX)
 if(WIN32)
   enable_language(RC)
 elseif(APPLE)
-  enable_language(OBJCXX)
+  enable_language(OBJC OBJCXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
