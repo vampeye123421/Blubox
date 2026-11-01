@@ -1,28 +1,11 @@
 #include "PublishedWorld.hpp"
 
 #include "RaylibCompat.hpp"
+#include "HttpClient.hpp"
 
 #include <nlohmann/json.hpp>
 
-#if defined(_WIN32)
 #include <raylib.h>
-#define Rectangle Win32Rectangle
-#define CloseWindow Win32CloseWindow
-#define ShowCursor Win32ShowCursor
-#define DrawText Win32DrawText
-#define DrawTextEx Win32DrawTextEx
-#define LoadImage Win32LoadImage
-#define PlaySound Win32PlaySound
-#include <windows.h>
-#include <winhttp.h>
-#undef PlaySound
-#undef LoadImage
-#undef DrawTextEx
-#undef DrawText
-#undef ShowCursor
-#undef CloseWindow
-#undef Rectangle
-#endif
 
 #include <algorithm>
 #include <fstream>
@@ -110,55 +93,26 @@ Color WithTransparency(Color value, float transparency) {
     return value;
 }
 
-#if defined(_WIN32)
-bool DownloadMap(std::wstring_view route, std::string &body, std::string &error) {
-    HINTERNET session = WinHttpOpen(L"BluboxClient/World", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) { error = "Could not initialize HTTPS for published world loading."; return false; }
-    WinHttpSetTimeouts(session, 3000, 3000, 5000, 5000);
-    HINTERNET connection = WinHttpConnect(session, L"blubox.runs-on.dev", INTERNET_DEFAULT_HTTPS_PORT, 0);
-    HINTERNET request = connection
-        ? WinHttpOpenRequest(connection, L"GET", std::wstring(route).c_str(), nullptr,
-                             WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
-        : nullptr;
-    bool ok = false;
-    if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                                      WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-        WinHttpReceiveResponse(request, nullptr)) {
-        DWORD status = 0;
-        DWORD statusSize = sizeof(status);
-        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
-                                WINHTTP_NO_HEADER_INDEX) && status == 200) {
-            std::string response;
-            for (;;) {
-                DWORD available = 0;
-                if (!WinHttpQueryDataAvailable(request, &available)) break;
-                if (available == 0) { body = std::move(response); ok = true; break; }
-                if (response.size() + available > kMaxWorldBytes) {
-                    error = "Published world exceeds the 4 MiB runtime limit.";
-                    break;
-                }
-                const std::size_t oldSize = response.size();
-                response.resize(oldSize + available);
-                DWORD received = 0;
-                if (!WinHttpReadData(request, response.data() + oldSize, available, &received)) break;
-                response.resize(oldSize + received);
-            }
-        } else if (status == 404) {
-            error = "This game has no published Blubox Studio map yet.";
-        } else {
-            error = "The website could not provide this published world.";
+bool DownloadMap(std::string_view route, std::string &body, std::string &error) {
+    try {
+        blubox::platform::HttpRequest request;
+        request.url = "https://blubox.runs-on.dev" + std::string(route);
+        request.timeoutMs = 5000;
+        request.maxResponseBytes = kMaxWorldBytes;
+        const auto response = blubox::platform::PerformHttpRequest(request);
+        if (response.status == 200) {
+            body = response.body;
+            return true;
         }
-    } else {
-        error = "Could not connect to the published world service.";
+        error = response.status == 404
+            ? "This game has no published Blubox Studio map yet."
+            : "The website could not provide this published world (HTTP " +
+                  std::to_string(response.status) + ").";
+    } catch (const std::exception& exception) {
+        error = std::string("Could not load the published world: ") + exception.what();
     }
-    if (request) WinHttpCloseHandle(request);
-    if (connection) WinHttpCloseHandle(connection);
-    WinHttpCloseHandle(session);
-    return ok;
+    return false;
 }
-#endif
 
 std::vector<std::string> WrapText(const Font *font, const std::string &text, float fontSize,
                                   float maxWidth, float maxHeight, bool wrap, bool truncate) {
@@ -223,15 +177,9 @@ bool PublishedWorld::Load(std::string_view worldId, std::string &error) {
         return false;
     }
 
-#if defined(_WIN32)
-    std::wstring route = L"/api/client/world/";
-    route.append(worldId.begin(), worldId.end());
+    const std::string route = "/api/client/world/" + std::string(worldId);
     std::string payload;
     if (!DownloadMap(route, payload, error)) return false;
-#else
-    error = "Published world loading is only available on Windows.";
-    return false;
-#endif
 
     try {
         const Json response = Json::parse(payload);

@@ -1,3 +1,4 @@
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -5,6 +6,17 @@
 #include <wincrypt.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#elif defined(__APPLE__)
+#include <Security/Security.h>
+#include <Security/SecRandom.h>
+#include <cerrno>
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
+extern char** environ;
+#endif
 
 #include "AuthSession.hpp"
 
@@ -12,6 +24,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
@@ -24,7 +37,17 @@ constexpr std::string_view kLoginUrl = "https://blubox.runs-on.dev/auth/studio";
 constexpr std::string_view kEntropyText = "Blubox Studio session v1";
 constexpr std::string_view kProtocolPrefix = "blubox-studio://";
 constexpr std::string_view kBase64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+#ifdef __APPLE__
+constexpr CFStringRef kKeychainService = CFSTR("com.blubox.studio.session");
+constexpr CFStringRef kKeychainAccount = CFSTR("session");
+#endif
 
+void SecureEraseBytes(unsigned char* bytes, std::size_t size) noexcept {
+    volatile unsigned char* output = bytes;
+    for (std::size_t index = 0; index < size; ++index) output[index] = 0;
+}
+
+#ifdef _WIN32
 std::string Base64Encode(const BYTE* data, std::size_t size) {
     std::string result;
     result.reserve(((size + 2) / 3) * 4);
@@ -78,7 +101,9 @@ DATA_BLOB EntropyBlob() {
     return {static_cast<DWORD>(kEntropyText.size()),
             reinterpret_cast<BYTE*>(const_cast<char*>(kEntropyText.data()))};
 }
+#endif
 
+#ifdef _WIN32
 HANDLE SessionUpdateEvent() {
     static HANDLE event = CreateEventW(nullptr, FALSE, FALSE,
                                        L"Local\\BluboxStudioSessionUpdated");
@@ -95,6 +120,77 @@ std::wstring Utf8ToWide(std::string_view value) {
                         static_cast<int>(value.size()), result.data(), length);
     return result;
 }
+#endif
+
+#ifdef __APPLE__
+CFMutableDictionaryRef CreateKeychainQuery() {
+    CFMutableDictionaryRef query = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    if (query == nullptr) throw std::runtime_error("Could not access the macOS login keychain.");
+    CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+    CFDictionarySetValue(query, kSecAttrService, kKeychainService);
+    CFDictionarySetValue(query, kSecAttrAccount, kKeychainAccount);
+    return query;
+}
+
+void SaveKeychainToken(std::string_view token) {
+    CFMutableDictionaryRef query = CreateKeychainQuery();
+    CFDataRef value = CFDataCreate(kCFAllocatorDefault,
+        reinterpret_cast<const UInt8*>(token.data()), static_cast<CFIndex>(token.size()));
+    if (value == nullptr) {
+        CFRelease(query);
+        throw std::runtime_error("Could not prepare the Studio session for secure storage.");
+    }
+
+    CFMutableDictionaryRef updates = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    if (updates == nullptr) {
+        CFRelease(value);
+        CFRelease(query);
+        throw std::runtime_error("Could not prepare the Studio session for secure storage.");
+    }
+    CFDictionarySetValue(updates, kSecValueData, value);
+    OSStatus status = SecItemUpdate(query, updates);
+    if (status == errSecItemNotFound) {
+        CFDictionarySetValue(query, kSecValueData, value);
+        CFDictionarySetValue(query, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly);
+        status = SecItemAdd(query, nullptr);
+    }
+    CFRelease(updates);
+    CFRelease(value);
+    CFRelease(query);
+    if (status != errSecSuccess) {
+        throw std::runtime_error("macOS could not securely store the Studio session in Keychain.");
+    }
+}
+
+std::string LoadKeychainToken() {
+    CFMutableDictionaryRef query = CreateKeychainQuery();
+    CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
+    CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne);
+    CFTypeRef result = nullptr;
+    const OSStatus status = SecItemCopyMatching(query, &result);
+    CFRelease(query);
+    if (status != errSecSuccess || result == nullptr) {
+        if (result != nullptr) CFRelease(result);
+        throw std::runtime_error("The saved Studio session is not available in the macOS login Keychain.");
+    }
+    const CFDataRef data = static_cast<CFDataRef>(result);
+    std::string token(reinterpret_cast<const char*>(CFDataGetBytePtr(data)),
+                      static_cast<std::size_t>(CFDataGetLength(data)));
+    CFRelease(data);
+    return token;
+}
+
+void DeleteKeychainToken() {
+    CFMutableDictionaryRef query = CreateKeychainQuery();
+    const OSStatus status = SecItemDelete(query);
+    CFRelease(query);
+    if (status != errSecSuccess && status != errSecItemNotFound) {
+        throw std::runtime_error("macOS could not remove the Studio session from Keychain.");
+    }
+}
+#endif
 
 int HexDigit(char ch) {
     if (ch >= '0' && ch <= '9') return ch - '0';
@@ -137,6 +233,7 @@ bool StartsWithInsensitive(std::string_view value, std::string_view prefix) {
 } // namespace
 
 std::filesystem::path SessionStore::Path() {
+#ifdef _WIN32
     PWSTR localAppData = nullptr;
     const HRESULT result = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &localAppData);
     if (FAILED(result) || localAppData == nullptr) throw std::runtime_error("Could not find the current user's Local AppData folder.");
@@ -145,11 +242,24 @@ std::filesystem::path SessionStore::Path() {
     path /= L"BluboxStudio";
     std::filesystem::create_directories(path);
     return path / L"session.json";
+#elif defined(__APPLE__)
+    const char* home = std::getenv("HOME");
+    if (home == nullptr || *home == '\0') throw std::runtime_error("The current user's home folder is unavailable.");
+    const auto path = std::filesystem::path(home) / "Library" / "Application Support" / "BluboxStudio";
+    std::filesystem::create_directories(path);
+    if (chmod(path.c_str(), S_IRWXU) != 0) {
+        throw std::runtime_error("Could not secure the Studio application support folder.");
+    }
+    return path / "session.json";
+#else
+    throw std::runtime_error("Secure Studio sessions are not supported on this platform.");
+#endif
 }
 
 bool SessionStore::Save(std::string_view token, std::string& error) {
     try {
         if (token.empty() || token.size() > 8192) throw std::runtime_error("The website token is missing or too large.");
+#ifdef _WIN32
         DATA_BLOB input{static_cast<DWORD>(token.size()), reinterpret_cast<BYTE*>(const_cast<char*>(token.data()))};
         DATA_BLOB entropy = EntropyBlob();
         DATA_BLOB encrypted{};
@@ -158,13 +268,20 @@ bool SessionStore::Save(std::string_view token, std::string& error) {
             throw std::runtime_error("Windows could not protect the Studio session with DPAPI.");
         }
         const std::string protectedToken = Base64Encode(encrypted.pbData, encrypted.cbData);
-        SecureZeroMemory(encrypted.pbData, encrypted.cbData);
+        SecureEraseBytes(encrypted.pbData, encrypted.cbData);
         LocalFree(encrypted.pbData);
+#elif defined(__APPLE__)
+        SaveKeychainToken(token);
+#endif
 
         const auto path = Path();
         auto temporary = path;
         temporary += L".tmp";
+#ifdef _WIN32
         const nlohmann::json data{{"version", 1}, {"protectedToken", protectedToken}};
+#else
+        const nlohmann::json data{{"version", 2}, {"keychain", true}};
+#endif
         {
             std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
             if (!file) throw std::runtime_error("Could not write the protected Studio session file.");
@@ -173,11 +290,20 @@ bool SessionStore::Save(std::string_view token, std::string& error) {
             file.flush();
             if (!file) throw std::runtime_error("Could not finish writing the protected Studio session file.");
         }
+#ifdef _WIN32
         if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
             DeleteFileW(temporary.c_str());
             throw std::runtime_error("Could not atomically update the protected Studio session file.");
         }
         if (HANDLE event = SessionUpdateEvent(); event != nullptr) SetEvent(event);
+#else
+        if (chmod(temporary.c_str(), S_IRUSR | S_IWUSR) != 0 ||
+            std::rename(temporary.string().c_str(), path.string().c_str()) != 0) {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            throw std::runtime_error("Could not atomically update the Studio session marker.");
+        }
+#endif
         error.clear();
         return true;
     } catch (const std::exception& exception) {
@@ -195,6 +321,7 @@ std::optional<std::string> SessionStore::Load(std::string& error) {
         std::ifstream file(path, std::ios::binary);
         const std::string contents((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         const auto data = nlohmann::json::parse(contents);
+#ifdef _WIN32
         if (data.value("version", 0) != 1) throw std::runtime_error("Unsupported protected Studio session file version.");
         const std::vector<BYTE> bytes = Base64Decode(data.at("protectedToken").get<std::string>());
         DATA_BLOB encrypted{static_cast<DWORD>(bytes.size()), const_cast<BYTE*>(bytes.data())};
@@ -205,8 +332,14 @@ std::optional<std::string> SessionStore::Load(std::string& error) {
             throw std::runtime_error("The saved Studio session cannot be decrypted for this Windows user.");
         }
         std::string token(reinterpret_cast<char*>(decrypted.pbData), decrypted.cbData);
-        SecureZeroMemory(decrypted.pbData, decrypted.cbData);
+        SecureEraseBytes(decrypted.pbData, decrypted.cbData);
         LocalFree(decrypted.pbData);
+#elif defined(__APPLE__)
+        if (data.value("version", 0) != 2 || !data.value("keychain", false)) {
+            throw std::runtime_error("The saved Studio session has an unsupported format.");
+        }
+        std::string token = LoadKeychainToken();
+#endif
         if (token.empty() || token.size() > 8192) throw std::runtime_error("The saved Studio token is invalid.");
         error.clear();
         return token;
@@ -219,12 +352,19 @@ std::optional<std::string> SessionStore::Load(std::string& error) {
 bool SessionStore::Clear(std::string& error) {
     try {
         const auto path = Path();
+#ifdef _WIN32
         if (!DeleteFileW(path.c_str())) {
             const DWORD code = GetLastError();
             if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND) {
                 throw std::runtime_error("Could not remove the saved Studio session file.");
             }
         }
+#elif defined(__APPLE__)
+        DeleteKeychainToken();
+        std::error_code fileError;
+        std::filesystem::remove(path, fileError);
+        if (fileError) throw std::runtime_error("Could not remove the saved Studio session marker.");
+#endif
         error.clear();
         return true;
     } catch (const std::exception& exception) {
@@ -244,8 +384,12 @@ std::optional<std::filesystem::file_time_type> SessionStore::ModifiedTime() {
 }
 
 bool SessionStore::ConsumeUpdateSignal() {
+#ifdef _WIN32
     HANDLE event = SessionUpdateEvent();
     return event != nullptr && WaitForSingleObject(event, 0) == WAIT_OBJECT_0;
+#else
+    return false;
+#endif
 }
 
 bool ParseStudioAuthUrl(std::string_view argument, std::string& token, std::string& error) {
@@ -290,12 +434,22 @@ bool ParseStudioAuthUrl(std::string_view argument, std::string& token, std::stri
 
 bool CreateStudioHandoffId(std::string& handoffId, std::string& error) {
     std::array<unsigned char, 32> randomBytes{};
+#ifdef _WIN32
     const NTSTATUS status = BCryptGenRandom(nullptr, randomBytes.data(),
         static_cast<ULONG>(randomBytes.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
     if (status < 0) {
         error = "Windows could not create a secure Studio sign-in request.";
         return false;
     }
+#elif defined(__APPLE__)
+    if (SecRandomCopyBytes(kSecRandomDefault, randomBytes.size(), randomBytes.data()) != errSecSuccess) {
+        error = "macOS could not create a secure Studio sign-in request.";
+        return false;
+    }
+#else
+    error = "Secure Studio sign-in is not supported on this platform.";
+    return false;
+#endif
     constexpr char hex[] = "0123456789abcdef";
     handoffId.clear();
     handoffId.reserve(randomBytes.size() * 2);
@@ -303,7 +457,7 @@ bool CreateStudioHandoffId(std::string& handoffId, std::string& error) {
         handoffId.push_back(hex[(byte >> 4) & 0x0f]);
         handoffId.push_back(hex[byte & 0x0f]);
     }
-    SecureZeroMemory(randomBytes.data(), randomBytes.size());
+    SecureEraseBytes(randomBytes.data(), randomBytes.size());
     error.clear();
     return true;
 }
@@ -312,7 +466,7 @@ bool OpenStudioLoginPage(std::string_view handoffId, std::string& error) {
     const char* configured = std::getenv("BLUBOX_STUDIO_LOGIN_URL");
     const std::string_view loginUrl = configured != nullptr && *configured != '\0'
         ? std::string_view(configured) : kLoginUrl;
-    std::wstring url;
+    std::string url;
     try {
         if (handoffId.size() != 64 ||
             !std::all_of(handoffId.begin(), handoffId.end(), [](char ch) {
@@ -321,32 +475,66 @@ bool OpenStudioLoginPage(std::string_view handoffId, std::string& error) {
             throw std::runtime_error("The Studio sign-in request is invalid.");
         }
         const std::string loginUrlWithHandoff = std::string(loginUrl) + "#studio_handoff=" + std::string(handoffId);
-        url = Utf8ToWide(loginUrlWithHandoff);
+        url = loginUrlWithHandoff;
     } catch (const std::exception& exception) {
         error = exception.what();
         return false;
     }
-    const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+#ifdef _WIN32
+    const std::wstring wideUrl = Utf8ToWide(url);
+    const auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", wideUrl.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
     if (result <= 32) {
         error = "Windows could not open the Blubox sign-in page in your browser.";
         return false;
     }
+#elif defined(__APPLE__)
+    char* const arguments[] = {const_cast<char*>("open"), url.data(), nullptr};
+    pid_t process = 0;
+    const int result = posix_spawnp(&process, "open", nullptr, nullptr, arguments, environ);
+    if (result != 0) {
+        error = "macOS could not open the Blubox sign-in page in your browser.";
+        return false;
+    }
+#else
+    error = "Opening the Blubox sign-in page is not supported on this platform.";
+    return false;
+#endif
     error.clear();
     return true;
 }
 
 StudioInstanceLock::StudioInstanceLock() {
+#ifdef _WIN32
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\BluboxStudioSingleton");
     if (mutex == nullptr) throw std::runtime_error("Could not create the Blubox Studio single-instance lock.");
     handle_ = mutex;
     primary_ = GetLastError() != ERROR_ALREADY_EXISTS;
+#elif defined(__APPLE__)
+    const auto lockPath = Path().parent_path() / "studio.lock";
+    const int descriptor = open(lockPath.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    if (descriptor < 0) throw std::runtime_error("Could not create the Blubox Studio single-instance lock.");
+    handle_ = reinterpret_cast<void*>(static_cast<intptr_t>(descriptor + 1));
+    primary_ = flock(descriptor, LOCK_EX | LOCK_NB) == 0;
+    if (!primary_ && errno != EWOULDBLOCK && errno != EAGAIN) {
+        close(descriptor);
+        handle_ = nullptr;
+        throw std::runtime_error("Could not acquire the Blubox Studio single-instance lock.");
+    }
+#endif
 }
 
 StudioInstanceLock::~StudioInstanceLock() {
+#ifdef _WIN32
     if (handle_ != nullptr) {
         if (primary_) ReleaseMutex(static_cast<HANDLE>(handle_));
         CloseHandle(static_cast<HANDLE>(handle_));
     }
+#elif defined(__APPLE__)
+    if (handle_ != nullptr) {
+        const auto descriptor = static_cast<int>(reinterpret_cast<intptr_t>(handle_) - 1);
+        close(descriptor);
+    }
+#endif
 }
 
 } // namespace blubox::studio

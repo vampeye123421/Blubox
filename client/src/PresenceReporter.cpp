@@ -1,14 +1,11 @@
 #include "PresenceReporter.hpp"
 
+#include "HttpClient.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <string_view>
-
-#if defined(_WIN32)
-#include <windows.h>
-#include <winhttp.h>
-#endif
 
 namespace {
 
@@ -24,45 +21,21 @@ bool IsPresenceToken(std::string_view token) {
     });
 }
 
-bool PostPresence(std::wstring_view route, std::string_view token) noexcept {
-#if defined(_WIN32)
-    HINTERNET session = WinHttpOpen(L"BluboxClient/Presence", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) return false;
-    WinHttpSetTimeouts(session, 2500, 2500, 2500, 2500);
-    HINTERNET connection = WinHttpConnect(session, L"blubox.runs-on.dev",
-                                          INTERNET_DEFAULT_HTTPS_PORT, 0);
-    HINTERNET request = connection
-        ? WinHttpOpenRequest(connection, L"POST", std::wstring(route).c_str(), nullptr,
-                             WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                             WINHTTP_FLAG_SECURE)
-        : nullptr;
-    bool ok = false;
-    if (request) {
-        const std::wstring headers = L"Content-Type: application/json\r\n";
+bool PostPresence(std::string_view route, std::string_view token) noexcept {
+    try {
         const std::string body = std::string("{\"token\":\"") + std::string(token) + "\"}";
-        if (WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()),
-                               const_cast<char *>(body.data()), static_cast<DWORD>(body.size()),
-                               static_cast<DWORD>(body.size()), 0) &&
-            WinHttpReceiveResponse(request, nullptr)) {
-            DWORD status = 0;
-            DWORD statusSize = sizeof(status);
-            if (WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                    WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
-                                    WINHTTP_NO_HEADER_INDEX)) {
-                ok = status >= 200 && status < 300;
-            }
-        }
-        WinHttpCloseHandle(request);
+        blubox::platform::HttpRequest request;
+        request.url = "https://blubox.runs-on.dev" + std::string(route);
+        request.method = "POST";
+        request.headers = {"Content-Type: application/json"};
+        request.body = body;
+        request.timeoutMs = 2500;
+        request.maxResponseBytes = 1024;
+        const auto response = blubox::platform::PerformHttpRequest(request);
+        return response.status >= 200 && response.status < 300;
+    } catch (...) {
+        return false;
     }
-    if (connection) WinHttpCloseHandle(connection);
-    WinHttpCloseHandle(session);
-    return ok;
-#else
-    (void)route;
-    (void)token;
-    return false;
-#endif
 }
 
 } // namespace
@@ -93,8 +66,8 @@ void PresenceReporter::Stop() noexcept {
 }
 
 void PresenceReporter::Run(std::stop_token stopToken) {
-    constexpr std::wstring_view heartbeatRoute = L"/presence/heartbeat";
-    constexpr std::wstring_view endRoute = L"/presence/end";
+    constexpr std::string_view heartbeatRoute = "/presence/heartbeat";
+    constexpr std::string_view endRoute = "/presence/end";
     while (!stopToken.stop_requested()) {
         std::string token;
         {

@@ -54,6 +54,10 @@
 #include <unordered_set>
 #include <vector>
 
+#ifdef __APPLE__
+#include "NativeMac.hpp"
+#endif
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -538,6 +542,11 @@ std::optional<std::filesystem::path> ChooseMapPath(bool save) {
     std::filesystem::path result(path.data());
     if (save && result.extension().empty()) result += L".blubox";
     return result;
+#elif defined(__APPLE__)
+    auto result = blubox::platform::ShowNativeFileDialog(
+        save, save ? "Save Blubox Map" : "Open Blubox Map", {".blubox", ".json"});
+    if (save && result && result->extension().empty()) *result += ".blubox";
+    return result;
 #else
     (void)save;
     return std::nullopt;
@@ -554,6 +563,9 @@ std::optional<std::filesystem::path> ChooseModelPath() {
     dialog.lpstrFilter = L"3D models (*.obj;*.gltf;*.glb)\0*.obj;*.gltf;*.glb\0OBJ (*.obj)\0*.obj\0glTF / GLB (*.gltf;*.glb)\0*.gltf;*.glb\0\0";
     dialog.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     return GetOpenFileNameW(&dialog) ? std::optional<std::filesystem::path>(path.data()) : std::nullopt;
+#elif defined(__APPLE__)
+    return blubox::platform::ShowNativeFileDialog(
+        false, "Import 3D Model", {".obj", ".gltf", ".glb"});
 #else
     return std::nullopt;
 #endif
@@ -569,6 +581,9 @@ std::optional<std::filesystem::path> ChooseTexturePath() {
     dialog.lpstrFilter = L"Images (*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.hdr;*.dds)\0*.png;*.jpg;*.jpeg;*.bmp;*.tga;*.hdr;*.dds\0All files (*.*)\0*.*\0\0";
     dialog.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     return GetOpenFileNameW(&dialog) ? std::optional<std::filesystem::path>(path.data()) : std::nullopt;
+#elif defined(__APPLE__)
+    return blubox::platform::ShowNativeFileDialog(
+        false, "Choose Texture", {".png", ".jpg", ".jpeg", ".bmp", ".tga", ".hdr", ".dds"});
 #else
     return std::nullopt;
 #endif
@@ -3641,6 +3656,8 @@ int main(int argc, char** argv) {
         TraceLog(LOG_ERROR, "Blubox Studio: %s", exception.what());
 #ifdef _WIN32
         MessageBoxA(nullptr, exception.what(), "Blubox Studio", MB_OK | MB_ICONERROR);
+#elif defined(__APPLE__)
+        blubox::platform::ShowNativeErrorDialog("Blubox Studio", exception.what());
 #endif
         return 1;
     } catch (...) {
@@ -3648,6 +3665,8 @@ int main(int argc, char** argv) {
         TraceLog(LOG_ERROR, "Blubox Studio: unknown startup exception.");
 #ifdef _WIN32
         MessageBoxA(nullptr, "An unknown startup error occurred.", "Blubox Studio", MB_OK | MB_ICONERROR);
+#elif defined(__APPLE__)
+        blubox::platform::ShowNativeErrorDialog("Blubox Studio", "An unknown startup error occurred.");
 #endif
         return 1;
     }

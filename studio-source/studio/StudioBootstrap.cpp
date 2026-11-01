@@ -4,6 +4,7 @@
 #include <raylib.h>
 #include <nlohmann/json.hpp>
 
+#if defined(_WIN32) || defined(__APPLE__)
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -15,14 +16,21 @@
 #define CloseWindow Win32CloseWindow
 #define ShowCursor Win32ShowCursor
 #include <windows.h>
-#include <winhttp.h>
 #include <bcrypt.h>
 #include <shellapi.h>
 #undef DrawText
 #undef ShowCursor
 #undef CloseWindow
 #undef Rectangle
+#elif defined(__APPLE__)
+#include <CommonCrypto/CommonDigest.h>
+#include <mach-o/dyld.h>
+#include <spawn.h>
+#include <sys/stat.h>
+extern char** environ;
+#endif
 
+#include "HttpClient.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -31,6 +39,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -48,13 +57,7 @@
 namespace {
 namespace fs = std::filesystem;
 using json = nlohmann::json;
-constexpr wchar_t kReadyArgument[] = L"--blubox-studio-ready";
-
-struct HttpsUrl {
-    std::wstring host;
-    std::wstring path;
-    INTERNET_PORT port = INTERNET_DEFAULT_HTTPS_PORT;
-};
+constexpr char kReadyArgument[] = "--blubox-studio-ready";
 
 struct UpdateManifest {
     std::string version;
@@ -62,95 +65,37 @@ struct UpdateManifest {
     std::string sha256;
 };
 
-std::wstring Utf8ToWide(std::string_view value) {
-    if (value.empty()) return {};
-    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                                           static_cast<int>(value.size()), nullptr, 0);
-    if (count <= 0) throw std::runtime_error("Invalid UTF-8 in Studio update metadata.");
-    std::wstring result(static_cast<size_t>(count), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                        static_cast<int>(value.size()), result.data(), count);
-    return result;
-}
-
-HttpsUrl ParseHttpsUrl(std::wstring_view value) {
-    URL_COMPONENTS components{};
-    components.dwStructSize = sizeof(components);
-    components.dwSchemeLength = static_cast<DWORD>(-1);
-    components.dwHostNameLength = static_cast<DWORD>(-1);
-    components.dwUrlPathLength = static_cast<DWORD>(-1);
-    components.dwExtraInfoLength = static_cast<DWORD>(-1);
-    std::wstring copy(value);
-    if (!WinHttpCrackUrl(copy.c_str(), static_cast<DWORD>(copy.size()), 0, &components) ||
-        components.nScheme != INTERNET_SCHEME_HTTPS || components.dwHostNameLength == 0) {
-        throw std::runtime_error("Studio update URLs must use HTTPS.");
-    }
-    HttpsUrl result;
-    result.host.assign(components.lpszHostName, components.dwHostNameLength);
-    result.path.assign(components.lpszUrlPath, components.dwUrlPathLength);
-    if (components.dwExtraInfoLength) {
-        result.path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
-    }
-    result.port = components.nPort;
-    return result;
-}
-
-std::vector<uint8_t> HttpGet(std::wstring_view url, const std::function<void(size_t, size_t)>& progress = {}) {
-    const HttpsUrl parts = ParseHttpsUrl(url);
-    HINTERNET session = WinHttpOpen(L"BluboxStudio/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) throw std::runtime_error("Could not initialize the Studio updater network session.");
-    HINTERNET connection = WinHttpConnect(session, parts.host.c_str(), parts.port, 0);
-    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", parts.path.c_str(),
-        nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
-    if (!request || !WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-        WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(request, nullptr)) {
-        if (request) WinHttpCloseHandle(request);
-        if (connection) WinHttpCloseHandle(connection);
-        WinHttpCloseHandle(session);
-        throw std::runtime_error("Could not fetch the Studio update.");
-    }
-
-    DWORD status = 0;
-    DWORD statusSize = sizeof(status);
-    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
-                             WINHTTP_NO_HEADER_INDEX) || status < 200 || status >= 300) {
-        WinHttpCloseHandle(request);
-        WinHttpCloseHandle(connection);
-        WinHttpCloseHandle(session);
-        throw std::runtime_error("The Studio update server returned HTTP " + std::to_string(status) + ".");
-    }
-
-    DWORD totalBytes = 0;
-    DWORD totalSize = sizeof(totalBytes);
-    WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
-                        WINHTTP_HEADER_NAME_BY_INDEX, &totalBytes, &totalSize,
-                        WINHTTP_NO_HEADER_INDEX);
+std::vector<uint8_t> HttpGet(std::string_view url, const std::function<void(size_t, size_t)>& progress = {}) {
+    if (!url.starts_with("https://")) throw std::runtime_error("Studio update URLs must use HTTPS.");
+    blubox::platform::HttpRequest request;
+    request.url = std::string(url);
+    request.timeoutMs = 120000;
+    request.maxResponseBytes = 512u * 1024u * 1024u;
     std::vector<uint8_t> bytes;
-    std::array<uint8_t, 64 * 1024> buffer{};
-    for (;;) {
-        DWORD available = 0;
-        if (!WinHttpQueryDataAvailable(request, &available)) break;
-        if (available == 0) break;
-        while (available > 0) {
-            DWORD read = 0;
-            const DWORD amount = std::min<DWORD>(available, static_cast<DWORD>(buffer.size()));
-            if (!WinHttpReadData(request, buffer.data(), amount, &read) || read == 0) {
-                WinHttpCloseHandle(request);
-                WinHttpCloseHandle(connection);
-                WinHttpCloseHandle(session);
-                throw std::runtime_error("The Studio update download was interrupted.");
-            }
-            bytes.insert(bytes.end(), buffer.begin(), buffer.begin() + read);
-            available -= read;
-            if (progress) progress(bytes.size(), totalBytes);
+    request.onChunk = [&bytes](const char* data, std::size_t size) {
+        constexpr std::size_t maximum = 512u * 1024u * 1024u;
+        if (size > maximum - std::min(bytes.size(), maximum)) {
+            throw std::runtime_error("The Studio update exceeds the supported download size.");
         }
+        bytes.insert(bytes.end(), data, data + size);
+    };
+    if (progress) {
+        request.onProgress = [&progress](std::uint64_t received, std::uint64_t total) {
+            progress(static_cast<std::size_t>(received), static_cast<std::size_t>(total));
+        };
     }
-    WinHttpCloseHandle(request);
-    WinHttpCloseHandle(connection);
-    WinHttpCloseHandle(session);
+    const auto response = blubox::platform::PerformHttpRequest(request);
+    if (response.status < 200 || response.status >= 300) {
+        throw std::runtime_error("The Studio update server returned HTTP " +
+                                 std::to_string(response.status) + ".");
+    }
     return bytes;
+}
+
+std::string Lowercase(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
 }
 
 bool IsVersion(std::string_view version) {
@@ -176,14 +121,26 @@ bool IsNewer(std::string_view candidate, std::string_view current) {
 
 UpdateManifest ParseManifest(std::string_view contents) {
     const json data = json::parse(contents);
-    if (!data.is_object() || !data.contains("version") || !data["version"].is_string() ||
-        !data.contains("downloadUrl") || !data["downloadUrl"].is_string() ||
-        !data.contains("sha256") || !data["sha256"].is_string()) {
+    if (!data.is_object() || !data.contains("version") || !data["version"].is_string()) {
         throw std::runtime_error("Studio update manifest is missing required fields.");
     }
+    const json* platformData = &data;
+#ifdef __APPLE__
+    if (!data.contains("platforms") || !data["platforms"].is_object() ||
+        !data["platforms"].contains("macos") || !data["platforms"]["macos"].is_object()) {
+        throw std::runtime_error("Studio update manifest does not contain macOS download metadata.");
+    }
+    platformData = &data["platforms"]["macos"];
+#endif
+    if (!platformData->contains("downloadUrl") ||
+        !(*platformData)["downloadUrl"].is_string() ||
+        !platformData->contains("sha256") ||
+        !(*platformData)["sha256"].is_string()) {
+        throw std::runtime_error("Studio update manifest is missing required platform fields.");
+    }
     UpdateManifest manifest{data["version"].get<std::string>(),
-                            data["downloadUrl"].get<std::string>(),
-                            data["sha256"].get<std::string>()};
+                            (*platformData)["downloadUrl"].get<std::string>(),
+                            (*platformData)["sha256"].get<std::string>()};
     if (!IsVersion(manifest.version) || manifest.sha256.size() != 64 ||
         !std::all_of(manifest.sha256.begin(), manifest.sha256.end(), [](unsigned char c) {
             return std::isxdigit(c);
@@ -192,6 +149,7 @@ UpdateManifest ParseManifest(std::string_view contents) {
 }
 
 std::string Sha256(std::span<const uint8_t> bytes) {
+#ifdef _WIN32
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     DWORD objectLength = 0, returned = 0;
@@ -212,6 +170,15 @@ std::string Sha256(std::span<const uint8_t> bytes) {
     }
     BCryptDestroyHash(hash);
     BCryptCloseAlgorithmProvider(algorithm, 0);
+#else
+    if (bytes.size() > std::numeric_limits<CC_LONG>::max()) {
+        throw std::runtime_error("The Studio update is too large to verify.");
+    }
+    std::array<uint8_t, CC_SHA256_DIGEST_LENGTH> digest{};
+    if (CC_SHA256(bytes.data(), static_cast<CC_LONG>(bytes.size()), digest.data()) == nullptr) {
+        throw std::runtime_error("Could not verify the downloaded Studio update.");
+    }
+#endif
     static constexpr char digits[] = "0123456789abcdef";
     std::string result;
     result.reserve(64);
@@ -241,6 +208,7 @@ void DrawProgress(std::string_view status, size_t received, size_t total) {
     EndDrawing();
 }
 
+#ifdef _WIN32
 std::wstring QuoteArgument(std::wstring_view argument) {
     std::wstring result = L"\"";
     size_t backslashes = 0;
@@ -254,6 +222,7 @@ std::wstring QuoteArgument(std::wstring_view argument) {
     result.push_back(L'"');
     return result;
 }
+#endif
 
 bool HasReadyFlag(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) if (std::string_view(argv[i]) == "--blubox-studio-ready") return true;
@@ -261,14 +230,12 @@ bool HasReadyFlag(int argc, char** argv) {
 }
 
 void LaunchUpdated(const fs::path& executable, int argc, char** argv) {
-    (void)argc;
-    (void)argv;
+#ifdef _WIN32
     int count = 0;
     LPWSTR* args = CommandLineToArgvW(GetCommandLineW(), &count);
     std::wstring command = QuoteArgument(executable.wstring());
     for (int i = 1; args && i < count; ++i) command += L" " + QuoteArgument(args[i]);
-    command += L" ";
-    command += kReadyArgument;
+    command += L" --blubox-studio-ready";
     if (args) LocalFree(args);
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
@@ -279,20 +246,59 @@ void LaunchUpdated(const fs::path& executable, int argc, char** argv) {
     }
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
+#else
+    std::vector<std::string> arguments;
+    arguments.reserve(static_cast<std::size_t>(argc) + 1);
+    arguments.push_back(executable.string());
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view(argv[i]) != kReadyArgument) arguments.emplace_back(argv[i]);
+    }
+    arguments.emplace_back(kReadyArgument);
+    std::vector<char*> argumentPointers;
+    argumentPointers.reserve(arguments.size() + 1);
+    for (auto& argument : arguments) argumentPointers.push_back(argument.data());
+    argumentPointers.push_back(nullptr);
+
+    posix_spawn_file_actions_t actions;
+    if (posix_spawn_file_actions_init(&actions) != 0) {
+        throw std::runtime_error("Could not prepare the updated Studio process.");
+    }
+    const int chdirResult = posix_spawn_file_actions_addchdir_np(
+        &actions, executable.parent_path().c_str());
+    pid_t process = 0;
+    const int result = chdirResult == 0
+        ? posix_spawn(&process, executable.c_str(), &actions, nullptr, argumentPointers.data(), environ)
+        : chdirResult;
+    posix_spawn_file_actions_destroy(&actions);
+    if (result != 0) throw std::runtime_error("Could not start the updated Studio.");
+#endif
 }
 
 fs::path CurrentExecutable() {
+#ifdef _WIN32
     std::wstring path(32768, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
     if (!length || length >= path.size()) throw std::runtime_error("Could not locate Blubox Studio.");
     path.resize(length);
     return fs::path(path);
+#else
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string path(size, '\0');
+    if (_NSGetExecutablePath(path.data(), &size) != 0) {
+        throw std::runtime_error("Could not locate Blubox Studio.");
+    }
+    std::error_code error;
+    const fs::path result = fs::canonical(path.c_str(), error);
+    if (error) throw std::runtime_error("Could not locate Blubox Studio: " + error.message());
+    return result;
+#endif
 }
 } // namespace
 #endif
 
 bool TryRunStudioUpdate(int argc, char** argv) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     if (HasReadyFlag(argc, argv)) {
         blubox::studio::LogDiagnostic("INFO", "Updater handoff accepted; starting the verified Studio build.");
         return false;
@@ -303,7 +309,7 @@ bool TryRunStudioUpdate(int argc, char** argv) {
     }
     try {
         blubox::studio::LogDiagnostic("INFO", "Checking the Studio update manifest.");
-        const auto manifestBytes = HttpGet(Utf8ToWide(BLUBOX_STUDIO_MANIFEST_URL));
+        const auto manifestBytes = HttpGet(BLUBOX_STUDIO_MANIFEST_URL);
         const UpdateManifest manifest = ParseManifest(std::string_view(
             reinterpret_cast<const char*>(manifestBytes.data()), manifestBytes.size()));
         if (!IsNewer(manifest.version, BLUBOX_STUDIO_VERSION)) {
@@ -313,14 +319,25 @@ bool TryRunStudioUpdate(int argc, char** argv) {
         blubox::studio::LogDiagnostic("INFO", std::string("Studio update available: ") + BLUBOX_STUDIO_VERSION +
             " -> " + manifest.version + ".");
 
+#ifdef _WIN32
         wchar_t localAppData[MAX_PATH]{};
         const DWORD chars = GetEnvironmentVariableW(L"LOCALAPPDATA", localAppData, MAX_PATH);
         if (!chars || chars >= MAX_PATH) throw std::runtime_error("LOCALAPPDATA is unavailable.");
+        const fs::path appData(localAppData);
+#else
+        const char* home = std::getenv("HOME");
+        if (home == nullptr || *home == '\0') throw std::runtime_error("The current user's home folder is unavailable.");
+        const fs::path appData = fs::path(home) / "Library" / "Application Support";
+#endif
         const fs::path current = CurrentExecutable();
-        const fs::path versionDirectory = fs::path(localAppData) / L"Blubox" / L"Studio" /
-            L"versions" / Utf8ToWide(manifest.version);
-        fs::create_directories(versionDirectory / L"assets" / L"editor" / L"fonts");
-        const fs::path executable = versionDirectory / L"BluboxStudio.exe";
+        const fs::path versionDirectory = appData / "Blubox" / "studio" /
+            "versions" / manifest.version;
+        fs::create_directories(versionDirectory / "assets" / "editor" / "fonts");
+#ifdef _WIN32
+        const fs::path executable = versionDirectory / "BluboxStudio.exe";
+#else
+        const fs::path executable = versionDirectory / "blubox_studio";
+#endif
 
         // A desktop or protocol shortcut can still point to the installer copy.
         // Reuse a previously verified versioned update instead of downloading
@@ -332,21 +349,21 @@ bool TryRunStudioUpdate(int argc, char** argv) {
                 std::vector<uint8_t> cachedBytes((std::istreambuf_iterator<char>(cachedFile)),
                                                 std::istreambuf_iterator<char>());
                 cachedUpdateIsValid = !cachedFile.bad() && !cachedBytes.empty() &&
-                    _stricmp(Sha256(cachedBytes).c_str(), manifest.sha256.c_str()) == 0;
+                    Lowercase(Sha256(cachedBytes)) == Lowercase(manifest.sha256);
             }
             if (!cachedUpdateIsValid) fs::remove(executable);
         }
 
         if (!cachedUpdateIsValid) {
             blubox::studio::LogDiagnostic("INFO", "Downloading and verifying Studio update.");
-            const auto updateBytes = HttpGet(Utf8ToWide(manifest.downloadUrl),
+            const auto updateBytes = HttpGet(manifest.downloadUrl,
                 [](size_t received, size_t total) { DrawProgress("Downloading Studio update", received, total); });
-            if (_stricmp(Sha256(updateBytes).c_str(), manifest.sha256.c_str()) != 0) {
+            if (Lowercase(Sha256(updateBytes)) != Lowercase(manifest.sha256)) {
                 throw std::runtime_error("The Studio update checksum did not match.");
             }
 
             DrawProgress("Installing update", updateBytes.size(), updateBytes.size());
-            const fs::path staging = versionDirectory / L"BluboxStudio.exe.tmp";
+            const fs::path staging = executable.string() + ".tmp";
             {
                 std::ofstream output(staging, std::ios::binary | std::ios::trunc);
                 if (!output) throw std::runtime_error("Could not stage the Studio update.");
@@ -356,11 +373,17 @@ bool TryRunStudioUpdate(int argc, char** argv) {
             }
             fs::remove(executable);
             fs::rename(staging, executable);
+#ifdef __APPLE__
+            if (chmod(executable.c_str(), S_IRUSR | S_IWUSR | S_IXUSR |
+                      S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH) != 0) {
+                throw std::runtime_error("Could not make the Studio update executable.");
+            }
+#endif
             blubox::studio::LogDiagnostic("INFO", "Studio executable installed in the versioned cache.");
         }
 
-        const fs::path sourceFonts = current.parent_path() / L"assets" / L"editor" / L"fonts";
-        fs::copy(sourceFonts, versionDirectory / L"assets" / L"editor" / L"fonts",
+        const fs::path sourceFonts = current.parent_path() / "assets" / "editor" / "fonts";
+        fs::copy(sourceFonts, versionDirectory / "assets" / "editor" / "fonts",
                  fs::copy_options::recursive | fs::copy_options::overwrite_existing);
         if (IsWindowReady()) CloseWindow();
         blubox::studio::LogDiagnostic("INFO", "Starting the verified Studio update process.");
@@ -369,7 +392,9 @@ bool TryRunStudioUpdate(int argc, char** argv) {
     } catch (const std::exception& error) {
         if (IsWindowReady()) CloseWindow();
         blubox::studio::LogDiagnostic("ERROR", std::string("Studio updater failed: ") + error.what());
+#ifdef _WIN32
         OutputDebugStringA((std::string("Blubox Studio updater: ") + error.what() + "\n").c_str());
+#endif
         return false;
     }
 #else

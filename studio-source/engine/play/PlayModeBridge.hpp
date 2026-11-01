@@ -6,6 +6,7 @@
 #include "../input/InputCommand.hpp"
 #include "../../studio/MapDocument.hpp"
 #include <atomic>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -48,6 +49,6 @@ class PlayModeBridge {
   mutable std::mutex errorMutex_;
   std::string lastError_;
   void* standaloneProcess_ = nullptr;
-  std::wstring standaloneMapDirectory_;
+  std::filesystem::path standaloneMapDirectory_;
 };
 }

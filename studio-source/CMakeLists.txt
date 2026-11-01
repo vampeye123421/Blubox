@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 project(BluboxStudio VERSION 0.1.14 LANGUAGES C CXX)
 if(WIN32)
   enable_language(RC)
+elseif(APPLE)
+  enable_language(OBJCXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -26,6 +28,15 @@ set(SUPPORT_FILEFORMAT_PNG ON CACHE BOOL "" FORCE)
 set(LUAU_BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(LUAU_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LUAU_BUILD_WEB OFF CACHE BOOL "" FORCE)
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "" FORCE)
+set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+if(WIN32)
+  set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+elseif(APPLE)
+  set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
+endif()
 set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
 set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
@@ -87,8 +98,11 @@ FetchContent_Declare(cgltf
   GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
   GIT_TAG v1.15
   GIT_SHALLOW TRUE)
+FetchContent_Declare(curl
+  URL https://curl.se/download/curl-8.10.1.tar.gz
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 
-FetchContent_MakeAvailable(raylib nlohmann_json imgui rlimgui imguizmo luau joltphysics enet)
+FetchContent_MakeAvailable(raylib nlohmann_json imgui rlimgui imguizmo luau joltphysics enet curl)
 FetchContent_GetProperties(tinyobjloader)
 if(NOT tinyobjloader_POPULATED)
   FetchContent_Populate(tinyobjloader)
@@ -98,6 +112,15 @@ if(NOT cgltf_POPULATED)
   FetchContent_Populate(cgltf)
 endif()
 target_include_directories(enet PUBLIC "${enet_SOURCE_DIR}/include")
+
+add_library(blubox_platform_http STATIC ../shared/HttpClient.cpp)
+target_include_directories(blubox_platform_http PUBLIC ../shared)
+target_link_libraries(blubox_platform_http PUBLIC CURL::libcurl)
+if(APPLE)
+  add_library(blubox_platform_native STATIC ../shared/NativeMac.mm)
+  target_include_directories(blubox_platform_native PUBLIC ../shared)
+  target_link_libraries(blubox_platform_native PUBLIC "-framework AppKit" "-framework Security")
+endif()
 
 add_library(blubox_studio_ui STATIC
   ${imgui_SOURCE_DIR}/imgui.cpp
@@ -123,6 +146,25 @@ add_executable(blubox_studio WIN32
   studio/ScriptEngine.cpp
   studio/StudioBootstrap.cpp
   studio/WebsiteApi.cpp)
+if(APPLE)
+  set(BLUBOX_STUDIO_BUNDLE_EXECUTABLE "Blubox Studio")
+  configure_file(
+    cmake/BluboxStudio-Info.plist.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxStudio-Info.plist"
+    @ONLY)
+  set_target_properties(blubox_studio PROPERTIES
+    MACOSX_BUNDLE TRUE
+    OUTPUT_NAME "${BLUBOX_STUDIO_BUNDLE_EXECUTABLE}"
+    MACOSX_BUNDLE_BUNDLE_NAME "Blubox Studio"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.blubox.studio"
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxStudio-Info.plist")
+  add_custom_command(TARGET blubox_studio POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:blubox_studio>/Contents/Resources"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${CMAKE_CURRENT_BINARY_DIR}/AppIcon.icns"
+      "$<TARGET_BUNDLE_DIR:blubox_studio>/Contents/Resources/AppIcon.icns"
+    VERBATIM)
+endif()
 target_sources(blubox_studio PRIVATE
   engine/EngineCore.cpp
   engine/TaskScheduler.cpp
@@ -193,11 +235,15 @@ target_compile_definitions(blubox_studio PRIVATE
   BLUBOX_STUDIO_MANIFEST_URL="https://raw.githubusercontent.com/vampeye123421/Blubox/main/studio-version.json")
 target_link_libraries(blubox_studio PRIVATE
   blubox_studio_ui
+  blubox_platform_http
   Luau.Compiler
   Luau.VM
   Jolt
   enet
   nlohmann_json::nlohmann_json)
+if(APPLE)
+  target_link_libraries(blubox_studio PRIVATE blubox_platform_native)
+endif()
 if(WIN32)
   target_link_libraries(blubox_studio PRIVATE winhttp crypt32 shell32 ole32 comdlg32 bcrypt)
 endif()

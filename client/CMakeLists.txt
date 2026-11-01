@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.24)
 project(BluboxClient VERSION 0.2.28 LANGUAGES C CXX)
 if(WIN32)
     enable_language(RC)
+elseif(APPLE)
+    enable_language(OBJCXX)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -28,6 +30,16 @@ set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "Build Jolt without link-time op
 set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "Use the standard dynamic MSVC runtime" FORCE)
 set(LUAU_BUILD_CLI OFF CACHE BOOL "Do not build Luau command line tools" FORCE)
 set(LUAU_BUILD_TESTS OFF CACHE BOOL "Do not build Luau tests" FORCE)
+
+set(BUILD_CURL_EXE OFF CACHE BOOL "Do not build curl command line tools" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "Do not build curl tests" FORCE)
+set(BUILD_LIBCURL_DOCS OFF CACHE BOOL "Do not build curl documentation" FORCE)
+set(CURL_DISABLE_INSTALL ON CACHE BOOL "Do not install curl with the app" FORCE)
+if(WIN32)
+    set(CURL_USE_SCHANNEL ON CACHE BOOL "Use Windows native TLS" FORCE)
+elseif(APPLE)
+    set(CURL_USE_SECTRANSP ON CACHE BOOL "Use macOS native TLS" FORCE)
+endif()
 
 FetchContent_Declare(
     raylib
@@ -70,7 +82,22 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(raylib JoltPhysics enet nlohmann_json luau)
+FetchContent_Declare(
+    curl
+    URL https://curl.se/download/curl-8.10.1.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+
+FetchContent_MakeAvailable(raylib JoltPhysics enet nlohmann_json luau curl)
+
+add_library(blubox_platform_http STATIC ../shared/HttpClient.cpp)
+target_include_directories(blubox_platform_http PUBLIC ../shared)
+target_link_libraries(blubox_platform_http PUBLIC CURL::libcurl)
+if(APPLE)
+    add_library(blubox_platform_native STATIC ../shared/NativeMac.mm)
+    target_include_directories(blubox_platform_native PUBLIC ../shared)
+    target_link_libraries(blubox_platform_native PUBLIC "-framework AppKit")
+endif()
 
 FetchContent_GetProperties(ufbx)
 if(NOT ufbx_POPULATED)
@@ -229,7 +256,10 @@ target_include_directories(blubox_client PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}/generated"
     ${enet_SOURCE_DIR}/include
 )
-target_link_libraries(blubox_client PRIVATE raylib Jolt enet nlohmann_json::nlohmann_json Luau.Compiler Luau.VM ufbx)
+target_link_libraries(blubox_client PRIVATE raylib Jolt enet nlohmann_json::nlohmann_json Luau.Compiler Luau.VM ufbx blubox_platform_http)
+if(APPLE)
+    target_link_libraries(blubox_client PRIVATE blubox_platform_native)
+endif()
 
 if(MSVC)
     target_compile_options(blubox_client PRIVATE /W4 /permissive-)
@@ -296,11 +326,36 @@ add_executable(blubox_launcher WIN32
     "${BLUBOX_LAUNCHER_FONT_HEADER}"
     "${BLUBOX_LAUNCHER_ICON_HEADER}"
 )
+if(APPLE)
+    set(BLUBOX_CLIENT_BUNDLE_EXECUTABLE "Blubox Client")
+    configure_file(
+        cmake/BluboxClient-Info.plist.in
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxClient-Info.plist"
+        @ONLY
+    )
+    set_target_properties(blubox_launcher PROPERTIES
+        MACOSX_BUNDLE TRUE
+        OUTPUT_NAME "${BLUBOX_CLIENT_BUNDLE_EXECUTABLE}"
+        MACOSX_BUNDLE_BUNDLE_NAME "Blubox Client"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.blubox.client"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxClient-Info.plist"
+    )
+    add_custom_command(TARGET blubox_launcher POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:blubox_launcher>/Contents/Resources"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${CMAKE_CURRENT_BINARY_DIR}/AppIcon.icns"
+            "$<TARGET_BUNDLE_DIR:blubox_launcher>/Contents/Resources/AppIcon.icns"
+        VERBATIM
+    )
+endif()
 if(WIN32)
     target_sources(blubox_launcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxIcon.rc")
 endif()
 target_include_directories(blubox_launcher PRIVATE src "${BLUBOX_LAUNCHER_GENERATED_DIR}")
-target_link_libraries(blubox_launcher PRIVATE raylib nlohmann_json::nlohmann_json)
+target_link_libraries(blubox_launcher PRIVATE raylib nlohmann_json::nlohmann_json blubox_platform_http)
+if(APPLE)
+    target_link_libraries(blubox_launcher PRIVATE blubox_platform_native)
+endif()
 if(MSVC)
     target_compile_options(blubox_launcher PRIVATE /W4 /permissive-)
 else()
@@ -328,7 +383,10 @@ if(WIN32)
     target_sources(blubox_studio_launcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/BluboxIcon.rc")
 endif()
 target_include_directories(blubox_studio_launcher PRIVATE src "${BLUBOX_LAUNCHER_GENERATED_DIR}")
-target_link_libraries(blubox_studio_launcher PRIVATE raylib nlohmann_json::nlohmann_json)
+target_link_libraries(blubox_studio_launcher PRIVATE raylib nlohmann_json::nlohmann_json blubox_platform_http)
+if(APPLE)
+    target_link_libraries(blubox_studio_launcher PRIVATE blubox_platform_native)
+endif()
 target_compile_definitions(blubox_studio_launcher PRIVATE BLUBOX_STUDIO_LAUNCHER=1)
 if(MSVC)
     target_compile_options(blubox_studio_launcher PRIVATE /W4 /permissive-)

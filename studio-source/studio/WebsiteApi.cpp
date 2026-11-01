@@ -1,49 +1,37 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOGDI
 #define NOMINMAX
-#include <windows.h>
-#include <winhttp.h>
-
 #include "WebsiteApi.hpp"
+#include "HttpClient.hpp"
 
 #include <algorithm>
 #include <cstdlib>
-#include <cwctype>
+#include <cctype>
+#include <curl/curl.h>
 #include <limits>
 #include <stdexcept>
-#include <vector>
 
 namespace blubox::studio {
 namespace {
 
-std::wstring Utf8ToWide(std::string_view value) {
-    if (value.empty()) return {};
-    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                                           static_cast<int>(value.size()), nullptr, 0);
-    if (count <= 0) throw std::runtime_error("API URL or token is not valid UTF-8.");
-    std::wstring result(static_cast<std::size_t>(count), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                        static_cast<int>(value.size()), result.data(), count);
-    return result;
-}
-
-struct InternetHandle {
-    HINTERNET value = nullptr;
-    explicit InternetHandle(HINTERNET handle = nullptr) : value(handle) {}
-    ~InternetHandle() { if (value != nullptr) WinHttpCloseHandle(value); }
-    InternetHandle(const InternetHandle&) = delete;
-    InternetHandle& operator=(const InternetHandle&) = delete;
-};
-
 struct HttpResult {
-    DWORD status = 0;
+    long status = 0;
     std::string body;
 };
 
-bool IsLoopbackHost(std::wstring_view host);
+std::string Lowercase(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
 
-HttpResult Request(std::string_view baseUrl, std::wstring_view method,
-                   std::wstring_view route, std::string_view accessToken,
+bool IsLoopbackHost(std::string_view host) {
+    return host == "localhost" || host == "127.0.0.1" ||
+           host == "::1" || host == "[::1]";
+}
+
+HttpResult Request(std::string_view baseUrl, std::string_view method,
+                   std::string_view route, std::string_view accessToken,
                    std::string_view body, bool allowAnonymous = false) {
     if (baseUrl.size() > 2048 || accessToken.size() > 8192 || body.size() > 64 * 1024 * 1024) {
         throw std::runtime_error("Website API request exceeds the supported size.");
@@ -55,84 +43,40 @@ HttpResult Request(std::string_view baseUrl, std::wstring_view method,
         throw std::runtime_error("The website session token contains invalid header characters.");
     }
 
-    const std::wstring wideUrl = Utf8ToWide(baseUrl);
-    URL_COMPONENTS parts{};
-    parts.dwStructSize = sizeof(parts);
-    parts.dwSchemeLength = static_cast<DWORD>(-1);
-    parts.dwHostNameLength = static_cast<DWORD>(-1);
-    parts.dwUrlPathLength = static_cast<DWORD>(-1);
-    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
-    if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &parts)) {
+    CURLU* parsed = curl_url();
+    if (parsed == nullptr) throw std::runtime_error("Could not validate the Blubox Studio API URL.");
+    const std::string base(baseUrl);
+    if (curl_url_set(parsed, CURLUPART_URL, base.c_str(), 0) != CURLUE_OK) {
+        curl_url_cleanup(parsed);
         throw std::runtime_error("Blubox Studio API URL is invalid.");
     }
-    std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
-    const bool secure = parts.nScheme == INTERNET_SCHEME_HTTPS;
-    const bool localHttp = parts.nScheme == INTERNET_SCHEME_HTTP && IsLoopbackHost(host);
-    if (!secure && !localHttp) {
+    char* schemeValue = nullptr;
+    char* hostValue = nullptr;
+    const CURLUcode schemeResult = curl_url_get(parsed, CURLUPART_SCHEME, &schemeValue, 0);
+    const CURLUcode hostResult = curl_url_get(parsed, CURLUPART_HOST, &hostValue, 0);
+    const std::string scheme = schemeResult == CURLUE_OK ? Lowercase(schemeValue) : std::string{};
+    const std::string host = hostResult == CURLUE_OK ? Lowercase(hostValue) : std::string{};
+    curl_free(schemeValue);
+    curl_free(hostValue);
+    curl_url_cleanup(parsed);
+    const bool secure = scheme == "https";
+    const bool localHttp = scheme == "http" && IsLoopbackHost(host);
+    if (host.empty() || (!secure && !localHttp)) {
         throw std::runtime_error("Blubox Studio requires HTTPS, except for HTTP loopback development servers.");
     }
-    std::wstring basePath(parts.lpszUrlPath, parts.dwUrlPathLength);
-    if (basePath.empty() || basePath.back() != L'/') basePath.push_back(L'/');
-    std::wstring requestPath = basePath + std::wstring(route);
-    if (parts.dwExtraInfoLength > 0) {
-        requestPath.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-    }
-
-    InternetHandle session(WinHttpOpen(L"BluboxStudio/0.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-    if (!session.value) throw std::runtime_error("Could not initialize the Windows HTTPS client.");
-    WinHttpSetTimeouts(session.value, 10000, 10000, 15000, 30000);
-    InternetHandle connection(WinHttpConnect(session.value, host.c_str(), parts.nPort, 0));
-    if (!connection.value) throw std::runtime_error("Could not connect to the Blubox website API.");
-    InternetHandle request(WinHttpOpenRequest(connection.value, std::wstring(method).c_str(),
-                                               requestPath.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                               WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                               secure ? WINHTTP_FLAG_SECURE : 0));
-    if (!request.value) throw std::runtime_error("Could not create the website API request.");
-
-    const wchar_t* headers = L"Content-Type: application/json; charset=utf-8\r\nAccept: application/json\r\n";
-    if (!WinHttpAddRequestHeaders(request.value, headers, static_cast<DWORD>(-1L), WINHTTP_ADDREQ_FLAG_ADD)) {
-        throw std::runtime_error("Could not set website API request headers.");
-    }
-    if (!accessToken.empty()) {
-        const std::wstring authorization = L"Authorization: Bearer " + Utf8ToWide(accessToken) + L"\r\n";
-        if (!WinHttpAddRequestHeaders(request.value, authorization.c_str(), static_cast<DWORD>(-1L), WINHTTP_ADDREQ_FLAG_ADD)) {
-            throw std::runtime_error("Could not set website API authorization header.");
-        }
-    }
-    const DWORD bodySize = static_cast<DWORD>(body.size());
-    const void* bodyData = body.empty() ? WINHTTP_NO_REQUEST_DATA : body.data();
-    if (!WinHttpSendRequest(request.value, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                            const_cast<void*>(bodyData), bodySize, bodySize, 0) ||
-        !WinHttpReceiveResponse(request.value, nullptr)) {
-        throw std::runtime_error("The website API request failed. Check the network and API URL.");
-    }
-
-    HttpResult result;
-    DWORD statusSize = sizeof(result.status);
-    if (!WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                             WINHTTP_HEADER_NAME_BY_INDEX, &result.status, &statusSize,
-                             WINHTTP_NO_HEADER_INDEX)) {
-        throw std::runtime_error("The website API returned no HTTP status.");
-    }
-    for (;;) {
-        DWORD available = 0;
-        if (!WinHttpQueryDataAvailable(request.value, &available)) {
-            throw std::runtime_error("Could not read the website API response.");
-        }
-        if (available == 0) break;
-        if (result.body.size() + available > 64 * 1024 * 1024) {
-            throw std::runtime_error("The website API response is too large.");
-        }
-        const std::size_t offset = result.body.size();
-        result.body.resize(offset + available);
-        DWORD read = 0;
-        if (!WinHttpReadData(request.value, result.body.data() + offset, available, &read)) {
-            throw std::runtime_error("Could not read the website API response.");
-        }
-        result.body.resize(offset + read);
-    }
-    return result;
+    std::string url(baseUrl);
+    while (!url.empty() && url.back() == '/') url.pop_back();
+    url += '/';
+    url += route;
+    blubox::platform::HttpRequest request;
+    request.url = std::move(url);
+    request.method = std::string(method);
+    request.headers = {"Content-Type: application/json; charset=utf-8", "Accept: application/json"};
+    if (!accessToken.empty()) request.headers.push_back("Authorization: Bearer " + std::string(accessToken));
+    request.body = body;
+    request.timeoutMs = 30000;
+    const auto response = blubox::platform::PerformHttpRequest(request);
+    return {response.status, response.body};
 }
 
 bool IsSafeWorldId(std::string_view id) {
@@ -141,14 +85,6 @@ bool IsSafeWorldId(std::string_view id) {
         if (!(std::isalnum(ch) || ch == '-' || ch == '_')) return false;
     }
     return true;
-}
-
-bool IsLoopbackHost(std::wstring_view host) {
-    std::wstring normalized(host);
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-        [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
-    return normalized == L"localhost" || normalized == L"127.0.0.1" ||
-           normalized == L"::1" || normalized == L"[::1]";
 }
 
 } // namespace
@@ -162,7 +98,7 @@ WebsiteApi::WebsiteApi() {
 bool WebsiteApi::PublishMap(const MapDocument& document, std::string_view accessToken,
                             std::string& error) const {
     try {
-        const HttpResult result = Request(baseUrl_, L"POST", L"api/studio/maps",
+        const HttpResult result = Request(baseUrl_, "POST", "api/studio/maps",
                                           accessToken, document.ToJson().dump());
         if (result.status < 200 || result.status >= 300) {
             if (result.status == 404) {
@@ -207,7 +143,7 @@ bool WebsiteApi::PublishGame(MapDocument& document, std::string_view title,
             if (!IsSafeWorldId(targetWorldId)) throw std::runtime_error("Choose a valid game to update.");
             payload["targetWorldId"] = targetWorldId;
         }
-        const HttpResult response = Request(baseUrl_, L"POST", L"api/studio/publish",
+        const HttpResult response = Request(baseUrl_, "POST", "api/studio/publish",
                                             accessToken, payload.dump());
         if (response.status < 200 || response.status >= 300) {
             if (response.status == 404) {
@@ -241,7 +177,7 @@ bool WebsiteApi::ListOwnedGames(std::string_view accessToken,
                                 std::vector<OwnedPublishedGame>& games,
                                 std::string& error) const {
     try {
-        const HttpResult response = Request(baseUrl_, L"GET", L"api/studio/games",
+        const HttpResult response = Request(baseUrl_, "GET", "api/studio/games",
                                             accessToken, {});
         if (response.status < 200 || response.status >= 300) {
             std::string detail;
@@ -278,8 +214,8 @@ bool WebsiteApi::DownloadMap(std::string_view worldId, std::string_view accessTo
                              MapDocument& document, std::string& error) const {
     try {
         if (!IsSafeWorldId(worldId)) throw std::runtime_error("Invalid Blubox world id.");
-        const std::wstring route = L"api/studio/maps/" + Utf8ToWide(worldId);
-        const HttpResult result = Request(baseUrl_, L"GET", route, accessToken, {});
+        const std::string route = "api/studio/maps/" + std::string(worldId);
+        const HttpResult result = Request(baseUrl_, "GET", route, accessToken, {});
         if (result.status < 200 || result.status >= 300) {
             throw std::runtime_error("Map download was rejected by the website (HTTP " +
                                      std::to_string(result.status) + ").");
@@ -297,7 +233,7 @@ bool WebsiteApi::DownloadMap(std::string_view worldId, std::string_view accessTo
 bool WebsiteApi::ValidateSession(std::string_view accessToken, std::string& displayName,
                                  std::string& error) const {
     try {
-        const HttpResult result = Request(baseUrl_, L"GET", L"api/studio/session", accessToken, {});
+        const HttpResult result = Request(baseUrl_, "GET", "api/studio/session", accessToken, {});
         if (result.status < 200 || result.status >= 300) {
             std::string detail;
             try {
@@ -337,7 +273,7 @@ bool WebsiteApi::PollStudioHandoff(std::string_view handoffId, std::string& acce
         }
 
         const nlohmann::json body{{"handoffId", handoffId}};
-        HttpResult result = Request(baseUrl_, L"POST", L"api/studio/handoff/redeem", {}, body.dump(), true);
+        HttpResult result = Request(baseUrl_, "POST", "api/studio/handoff/redeem", {}, body.dump(), true);
         if (result.status == 202) {
             error.clear();
             return true;

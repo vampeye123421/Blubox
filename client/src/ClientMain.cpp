@@ -5,6 +5,10 @@
 #include <iostream>
 #include <utility>
 
+#ifdef __APPLE__
+#include "NativeMac.hpp"
+#endif
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define Rectangle Win32Rectangle
@@ -33,6 +37,8 @@ int main(int argc, char *argv[]) {
     } catch (const std::exception &error) {
 #ifdef _WIN32
         MessageBoxA(nullptr, error.what(), "Blubox Client", MB_OK | MB_ICONERROR);
+#elif defined(__APPLE__)
+        blubox::platform::ShowNativeErrorDialog("Blubox Client", error.what());
 #else
         std::cerr << "Error: " << error.what() << '\n';
 #endif

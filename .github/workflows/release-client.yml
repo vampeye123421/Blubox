@@ -178,3 +178,162 @@ jobs:
               sha: studioCurrent.data.sha,
               content: Buffer.from(`${JSON.stringify(studioManifest, null, 2)}\n`).toString('base64'),
             });
+
+  macos:
+    needs: windows
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Create app icons
+        shell: bash
+        run: |
+          mkdir -p build studio-build
+          make_icon() {
+            source="$1"
+            output="$2"
+            iconset="${output%.icns}.iconset"
+            mkdir -p "$iconset"
+            for size in 16 32 128 256 512 1024; do
+              sips -z "$size" "$size" "$source" \
+                --out "$iconset/icon_${size}x${size}.png" >/dev/null
+            done
+            for size in 16 32 128 256; do
+              double_size=$((size * 2))
+              sips -z "$double_size" "$double_size" "$source" \
+                --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+            done
+            mv "$iconset/icon_1024x1024.png" "$iconset/icon_512x512@2x.png"
+            iconutil -c icns "$iconset" -o "$output"
+          }
+          make_icon client/assets/bloxity-icon.png build/AppIcon.icns
+          make_icon studio-source/assets/branding/bloxity-icon.png studio-build/AppIcon.icns
+
+      - name: Configure Client
+        run: >-
+          cmake -S client -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Configure Studio
+        run: >-
+          cmake -S studio-source -B studio-build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+      - name: Build macOS apps and runtime payloads
+        run: |
+          cmake --build build --parallel 2 --target blubox_client blubox_launcher blubox_studio_launcher
+          cmake --build studio-build --parallel 2 --target blubox_studio
+
+      - name: Package separate app bundles
+        id: package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          studio_version="$(sed -nE 's/^project\(BluboxStudio VERSION ([0-9]+(\.[0-9]+){1,3}).*/\1/p' studio-source/CMakeLists.txt)"
+          if [[ -z "$studio_version" ]]; then
+            echo "Studio version missing from studio-source/CMakeLists.txt." >&2
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "build/Blubox Client.app" "$RUNNER_TEMP/BluboxClient-macOS-universal.zip"
+          ditto -c -k --sequesterRsrc --keepParent "studio-build/Blubox Studio.app" "$RUNNER_TEMP/BluboxStudio-macOS-universal.zip"
+          mkdir -p "$RUNNER_TEMP/blubox-macos-runtime"
+          cp "build/blubox_client" "$RUNNER_TEMP/blubox-macos-runtime/BluboxClient-macOS-universal"
+          cp "build/Blubox Client.app/Contents/MacOS/Blubox Client" "$RUNNER_TEMP/blubox-macos-runtime/BluboxLauncher-macOS-universal"
+          cp "studio-build/Blubox Studio.app/Contents/MacOS/Blubox Studio" "$RUNNER_TEMP/blubox-macos-runtime/BluboxStudio-macOS-universal"
+          cp "build/blubox_studio_launcher" "$RUNNER_TEMP/blubox-macos-runtime/BluboxStudioLauncher-macOS-universal"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "studio_version=$studio_version" >> "$GITHUB_OUTPUT"
+
+      - name: Compute runtime checksums
+        id: checksums
+        shell: bash
+        run: |
+          runtime="$RUNNER_TEMP/blubox-macos-runtime"
+          echo "client=$(shasum -a 256 "$runtime/BluboxClient-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "launcher=$(shasum -a 256 "$runtime/BluboxLauncher-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "studio=$(shasum -a 256 "$runtime/BluboxStudio-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "studio_launcher=$(shasum -a 256 "$runtime/BluboxStudioLauncher-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish macOS app bundles and runtime payloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release upload "v$version" \
+            "$RUNNER_TEMP/BluboxClient-macOS-universal.zip" \
+            "$RUNNER_TEMP/BluboxStudio-macOS-universal.zip" \
+            --repo "${{ github.repository }}" \
+            --clobber
+          gh release upload "runtime-v$version" \
+            "$RUNNER_TEMP/blubox-macos-runtime/BluboxClient-macOS-universal" \
+            "$RUNNER_TEMP/blubox-macos-runtime/BluboxLauncher-macOS-universal" \
+            "$RUNNER_TEMP/blubox-macos-runtime/BluboxStudio-macOS-universal" \
+            "$RUNNER_TEMP/blubox-macos-runtime/BluboxStudioLauncher-macOS-universal" \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+      - name: Publish macOS updater manifests
+        uses: actions/github-script@v8
+        env:
+          CLIENT_SHA256: ${{ steps.checksums.outputs.client }}
+          CLIENT_LAUNCHER_SHA256: ${{ steps.checksums.outputs.launcher }}
+          STUDIO_SHA256: ${{ steps.checksums.outputs.studio }}
+          STUDIO_LAUNCHER_SHA256: ${{ steps.checksums.outputs.studio_launcher }}
+          STUDIO_VERSION: ${{ steps.package.outputs.studio_version }}
+        with:
+          script: |
+            const version = context.ref.replace('refs/tags/v', '');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runtimeTag = `runtime-v${version}`;
+            const current = await github.rest.repos.getContent({
+              owner, repo, path: 'version.json', ref: 'main',
+            });
+            const manifest = JSON.parse(Buffer.from(current.data.content, 'base64').toString('utf8'));
+            manifest.platforms ??= {};
+            manifest.platforms.macos = {
+              downloadUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxClient-macOS-universal`,
+              sha256: process.env.CLIENT_SHA256,
+              launcherVersion: version,
+              launcherDownloadUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxLauncher-macOS-universal`,
+              launcherSha256: process.env.CLIENT_LAUNCHER_SHA256,
+              studioVersion: process.env.STUDIO_VERSION,
+              studioDownloadUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxStudio-macOS-universal`,
+              studioSha256: process.env.STUDIO_SHA256,
+              studioFontUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/InterVariable.ttf`,
+              studioFontSha256: manifest.studioFontSha256,
+              studioCodeFontUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/JetBrainsMonoRegular.ttf`,
+              studioCodeFontSha256: manifest.studioCodeFontSha256,
+              studioLauncherVersion: version,
+              studioLauncherDownloadUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxStudioLauncher-macOS-universal`,
+              studioLauncherSha256: process.env.STUDIO_LAUNCHER_SHA256,
+            };
+            const content = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`).toString('base64');
+            await github.rest.repos.createOrUpdateFileContents({
+              owner, repo, path: 'version.json', branch: 'main',
+              message: `Publish Blubox macOS manifest v${version}`,
+              sha: current.data.sha, content,
+            });
+            const studioCurrent = await github.rest.repos.getContent({
+              owner, repo, path: 'studio-version.json', ref: 'main',
+            });
+            const studioManifest = JSON.parse(
+              Buffer.from(studioCurrent.data.content, 'base64').toString('utf8'),
+            );
+            studioManifest.platforms ??= {};
+            studioManifest.platforms.macos = {
+              downloadUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxStudio-macOS-universal`,
+              sha256: process.env.STUDIO_SHA256,
+            };
+            await github.rest.repos.createOrUpdateFileContents({
+              owner, repo, path: 'studio-version.json', branch: 'main',
+              message: `Publish Blubox Studio macOS manifest v${process.env.STUDIO_VERSION}`,
+              sha: studioCurrent.data.sha,
+              content: Buffer.from(`${JSON.stringify(studioManifest, null, 2)}\n`).toString('base64'),
+            });

@@ -9,6 +9,10 @@
 #include <iostream>
 #include <stdexcept>
 
+#ifdef __APPLE__
+#include "NativeMac.hpp"
+#endif
+
 #ifdef _WIN32
 #include <cstdlib>
 #define WIN32_LEAN_AND_MEAN
@@ -71,20 +75,30 @@ int main(int argc, char *argv[]) {
 #endif
         }
         if (options.registerProtocol) {
+#ifdef _WIN32
             RegisterBluboxProtocolForCurrentUser();
             std::cout << "Registered blubox:// for the current user.\n";
             return 0;
+#else
+            throw std::runtime_error("Custom URL schemes are registered by the macOS application bundle.");
+#endif
         }
         if (options.unregisterProtocol) {
+#ifdef _WIN32
             UnregisterBluboxProtocolForCurrentUser();
             std::cout << "Removed the blubox:// registration for the current user.\n";
             return 0;
+#else
+            throw std::runtime_error("Custom URL schemes are registered by the macOS application bundle.");
+#endif
         }
         return RunLauncher(options, argc, argv);
     } catch (const std::exception &error) {
         LogLauncherDiagnostic(std::string("fatal: ") + error.what());
 #ifdef _WIN32
         MessageBoxA(nullptr, error.what(), "Blubox Launcher", MB_OK | MB_ICONERROR);
+#elif defined(__APPLE__)
+        blubox::platform::ShowNativeErrorDialog("Blubox Launcher", error.what());
 #else
         std::cerr << "Launcher error: " << error.what() << '\n';
 #endif

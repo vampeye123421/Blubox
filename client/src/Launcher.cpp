@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -14,9 +15,11 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <fcntl.h>
 #include <iostream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -26,6 +29,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include "HttpClient.hpp"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -46,11 +50,15 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#include <winhttp.h>
 #include <bcrypt.h>
 #else
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <CommonCrypto/CommonDigest.h>
+#include <mach-o/dyld.h>
+#include <sys/stat.h>
+#endif
 #endif
 
 namespace fs = std::filesystem;
@@ -59,6 +67,17 @@ namespace {
 
 constexpr char kManifestUrl[] =
     "https://raw.githubusercontent.com/vampeye123421/Blubox/main/version.json";
+#ifdef _WIN32
+const fs::path kClientBinaryName = L"blubox_client.exe";
+const fs::path kStudioBinaryName = L"blubox_studio.exe";
+const fs::path kClientLauncherName = L"blubox_launcher.exe";
+const fs::path kStudioLauncherName = L"blubox_studio_launcher.exe";
+#else
+const fs::path kClientBinaryName = "blubox_client";
+const fs::path kStudioBinaryName = "blubox_studio";
+const fs::path kClientLauncherName = "blubox_launcher";
+const fs::path kStudioLauncherName = "blubox_studio_launcher";
+#endif
 
 struct UpdateManifest {
     std::string version;
@@ -150,25 +169,7 @@ void ApplySplashWindowCorners() {
     }
     FreeLibrary(gdi);
 }
-
-struct WinHttpHandle {
-    HINTERNET value = nullptr;
-    ~WinHttpHandle() { if (value != nullptr) WinHttpCloseHandle(value); }
-    WinHttpHandle(const WinHttpHandle &) = delete;
-    WinHttpHandle &operator=(const WinHttpHandle &) = delete;
-    WinHttpHandle() = default;
-};
-
-std::wstring Utf8ToWide(std::string_view text) {
-    if (text.empty()) return {};
-    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
-                                           static_cast<int>(text.size()), nullptr, 0);
-    if (length <= 0) throw std::runtime_error("The update URL is not valid UTF-8.");
-    std::wstring result(static_cast<size_t>(length), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
-                        static_cast<int>(text.size()), result.data(), length);
-    return result;
-}
+#endif
 
 std::string AddManifestCacheBuster(std::string url) {
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(
@@ -178,90 +179,41 @@ std::string AddManifestCacheBuster(std::string url) {
     return url;
 }
 
-struct UrlParts {
-    std::wstring host;
-    std::wstring path;
-    INTERNET_PORT port = 0;
-    DWORD flags = 0;
-};
-
-UrlParts CrackHttpsUrl(std::string_view url) {
-    const std::wstring wideUrl = Utf8ToWide(url);
-    URL_COMPONENTS parts{};
-    parts.dwStructSize = sizeof(parts);
-    parts.dwSchemeLength = static_cast<DWORD>(-1);
-    parts.dwHostNameLength = static_cast<DWORD>(-1);
-    parts.dwUrlPathLength = static_cast<DWORD>(-1);
-    parts.dwExtraInfoLength = static_cast<DWORD>(-1);
-    if (!WinHttpCrackUrl(wideUrl.c_str(), static_cast<DWORD>(wideUrl.size()), 0, &parts) ||
-        parts.nScheme != INTERNET_SCHEME_HTTPS) {
+std::string CrackHttpsUrl(std::string_view url) {
+    if (!url.starts_with("https://") || url.size() > 8192) {
         throw std::runtime_error("The manifest must use a valid HTTPS URL.");
     }
-    UrlParts result;
-    result.host.assign(parts.lpszHostName, parts.dwHostNameLength);
-    result.path.assign(parts.lpszUrlPath, parts.dwUrlPathLength);
-    if (parts.dwExtraInfoLength > 0) result.path.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-    if (result.path.empty()) result.path = L"/";
-    result.port = parts.nPort;
-    result.flags = WINHTTP_FLAG_SECURE;
-    return result;
+    return std::string(url);
 }
 
 template <typename Consumer>
-void TransferHttps(const UrlParts &url, Consumer &&consume) {
-    WinHttpHandle session;
-    session.value = WinHttpOpen(L"BluboxLauncher/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session.value) throw std::runtime_error("WinHTTP is unavailable.");
-    WinHttpSetTimeouts(session.value, 8000, 8000, 15000, 15000);
-    WinHttpHandle connection;
-    connection.value = WinHttpConnect(session.value, url.host.c_str(), url.port, 0);
-    if (!connection.value) throw std::runtime_error("Could not connect to the update feed over HTTPS.");
-    WinHttpHandle request;
-    request.value = WinHttpOpenRequest(connection.value, L"GET", url.path.c_str(), nullptr,
-                                       WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, url.flags);
-    if (!request.value) throw std::runtime_error("The HTTPS request could not be created.");
-    if (!WinHttpSendRequest(request.value, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                            WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-        !WinHttpReceiveResponse(request.value, nullptr)) {
-        throw std::runtime_error("The HTTPS download failed.");
-    }
-    DWORD status = 0;
-    DWORD statusSize = sizeof(status);
-    if (!WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
-                             WINHTTP_NO_HEADER_INDEX) || status != 200) {
-        throw std::runtime_error("The update server returned HTTP " + std::to_string(status) + ".");
-    }
-
-    ULONGLONG total = 0;
-    wchar_t lengthText[32]{};
-    DWORD lengthSize = sizeof(lengthText);
-    if (WinHttpQueryHeaders(request.value, WINHTTP_QUERY_CONTENT_LENGTH,
-                            WINHTTP_HEADER_NAME_BY_INDEX, lengthText, &lengthSize,
-                            WINHTTP_NO_HEADER_INDEX)) {
-        try { total = std::stoull(lengthText); } catch (...) { total = 0; }
-    }
-    // Read larger blocks and avoid an extra QueryDataAvailable round trip per
-    // chunk. A megabyte is enough to keep WinHTTP busy without a large stack
-    // allocation in the launcher.
-    std::vector<char> buffer(1024 * 1024);
-    ULONGLONG received = 0;
-    for (;;) {
-        DWORD read = 0;
-        if (!WinHttpReadData(request.value, buffer.data(),
-                             static_cast<DWORD>(buffer.size()), &read)) {
-            throw std::runtime_error("The HTTPS download was interrupted.");
-        }
-        if (read == 0) break;
-        received += read;
-        consume(buffer.data(), read, total, received);
+void TransferHttps(const std::string &url, Consumer &&consume) {
+    blubox::platform::HttpRequest request;
+    request.url = url;
+    request.timeoutMs = 120000;
+    request.maxResponseBytes = std::numeric_limits<std::size_t>::max();
+    std::uint64_t total = 0;
+    std::uint64_t received = 0;
+    request.onChunk = [&consume, &total, &received](const char *data, std::size_t count) {
+        received += count;
+        consume(data, count, total, received);
+    };
+    request.onProgress = [&consume, &total, &received](std::uint64_t current, std::uint64_t expected) {
+        received = std::max(received, current);
+        total = expected;
+        consume(nullptr, 0, total, received);
+    };
+    const auto response = blubox::platform::PerformHttpRequest(request);
+    if (response.status != 200) {
+        throw std::runtime_error("The update server returned HTTP " +
+                                 std::to_string(response.status) + ".");
     }
 }
 
 std::string ReadHttpsText(std::string_view url) {
     std::string body;
-    TransferHttps(CrackHttpsUrl(url), [&body](const char *data, size_t count, ULONGLONG, ULONGLONG) {
+    TransferHttps(CrackHttpsUrl(url), [&body](const char *data, size_t count, std::uint64_t, std::uint64_t) {
+        if (count == 0) return;
         if (count > 64 * 1024 - std::min<size_t>(body.size(), 64 * 1024)) {
             throw std::runtime_error("The update manifest is too large.");
         }
@@ -276,9 +228,11 @@ void DownloadHttpsFile(std::string_view url, const fs::path &destination) {
     g_splash.transferStarted = std::chrono::steady_clock::now();
     auto nextProgressDraw = g_splash.transferStarted;
     TransferHttps(CrackHttpsUrl(url), [&output, &nextProgressDraw](const char *data, size_t count,
-                                                                   ULONGLONG total, ULONGLONG received) {
-        output.write(data, static_cast<std::streamsize>(count));
-        if (!output) throw std::runtime_error("Could not save the downloaded client.");
+                                                                   std::uint64_t total, std::uint64_t received) {
+        if (count > 0) {
+            output.write(data, static_cast<std::streamsize>(count));
+            if (!output) throw std::runtime_error("Could not save the downloaded client.");
+        }
         const auto now = std::chrono::steady_clock::now();
         const double elapsed = std::chrono::duration<double>(now - g_splash.transferStarted).count();
         const double bytesPerSecond = elapsed > 0.0 ? static_cast<double>(received) / elapsed : 0.0;
@@ -295,6 +249,7 @@ void DownloadHttpsFile(std::string_view url, const fs::path &destination) {
 }
 
 std::string Sha256File(const fs::path &path) {
+#ifdef _WIN32
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) {
@@ -341,8 +296,32 @@ std::string Sha256File(const fs::path &path) {
         BCryptCloseAlgorithmProvider(algorithm, 0);
         throw;
     }
-}
+#else
+    CC_SHA256_CTX context;
+    if (CC_SHA256_Init(&context) == 0) throw std::runtime_error("Could not initialize SHA-256.");
+    std::ifstream input(path, std::ios::binary);
+    if (!input) throw std::runtime_error("Could not open the client for verification.");
+    std::array<char, 256 * 1024> buffer{};
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const auto count = input.gcount();
+        if (count > 0 && CC_SHA256_Update(&context, buffer.data(), static_cast<CC_LONG>(count)) == 0) {
+            throw std::runtime_error("SHA-256 verification failed.");
+        }
+    }
+    if (!input.eof()) throw std::runtime_error("Could not read the file during SHA-256 verification.");
+    std::array<unsigned char, CC_SHA256_DIGEST_LENGTH> digest{};
+    if (CC_SHA256_Final(digest.data(), &context) == 0) throw std::runtime_error("Could not finalize SHA-256.");
+    constexpr char hex[] = "0123456789abcdef";
+    std::string result;
+    result.reserve(digest.size() * 2);
+    for (unsigned char byte : digest) {
+        result.push_back(hex[byte >> 4]);
+        result.push_back(hex[byte & 0x0f]);
+    }
+    return result;
 #endif
+}
 
 fs::path ExecutablePath() {
 #ifdef _WIN32
@@ -351,6 +330,17 @@ fs::path ExecutablePath() {
     if (length == 0 || length >= buffer.size()) throw std::runtime_error("Could not locate the launcher.");
     buffer.resize(length);
     return fs::path(buffer);
+#elif defined(__APPLE__)
+    std::uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string buffer(size, '\0');
+    if (_NSGetExecutablePath(buffer.data(), &size) != 0) {
+        throw std::runtime_error("Could not locate the launcher.");
+    }
+    std::error_code error;
+    const fs::path path = fs::canonical(buffer.c_str(), error);
+    if (error) throw std::runtime_error("Could not locate the launcher: " + error.message());
+    return path;
 #else
     std::error_code error;
     const fs::path path = fs::canonical("/proc/self/exe", error);
@@ -364,6 +354,10 @@ fs::path InstallRoot() {
     const wchar_t *localAppData = _wgetenv(L"LOCALAPPDATA");
     if (localAppData == nullptr || *localAppData == L'\0') throw std::runtime_error("LOCALAPPDATA is not defined.");
     return fs::path(localAppData) / L"Blubox";
+#elif defined(__APPLE__)
+    const char *home = std::getenv("HOME");
+    if (home == nullptr || *home == '\0') throw std::runtime_error("HOME is not defined.");
+    return fs::path(home) / "Library" / "Application Support" / "Blubox";
 #else
     const char *home = std::getenv("HOME");
     if (home == nullptr || *home == '\0') throw std::runtime_error("HOME is not defined.");
@@ -430,15 +424,38 @@ UpdateManifest ParseUpdateManifest(std::string_view contents) {
             [](unsigned char c) { return std::isalnum(c) || c == '.' || c == '-' || c == '_'; })) {
         throw std::runtime_error("The update manifest version is invalid.");
     }
-    if (json.contains("downloadUrl") && json["downloadUrl"].is_string()) {
-        manifest.downloadUrl = json["downloadUrl"].get<std::string>();
+    const nlohmann::json *platformPayload = &json;
+#ifdef __APPLE__
+    if (!json.contains("platforms") || !json["platforms"].is_object() ||
+        !json["platforms"].contains("macos") || !json["platforms"]["macos"].is_object()) {
+        throw std::runtime_error("The update manifest does not contain macOS download metadata.");
     }
-    if (json.contains("sha256") && json["sha256"].is_string()) {
-        manifest.sha256 = json["sha256"].get<std::string>();
-    }
-    const auto readString = [&json](const char *key, std::string &value) {
-        if (json.contains(key) && json[key].is_string()) value = json[key].get<std::string>();
+    platformPayload = &json["platforms"]["macos"];
+#endif
+    const auto readString = [&json, platformPayload](const char *key, std::string &value) {
+        if (platformPayload->contains(key) && (*platformPayload)[key].is_string()) {
+            value = (*platformPayload)[key].get<std::string>();
+        }
+#ifndef __APPLE__
+        else if (json.contains(key) && json[key].is_string()) {
+            value = json[key].get<std::string>();
+        }
+#else
+        else if (std::string_view(key) != "downloadUrl" &&
+                 std::string_view(key) != "sha256" &&
+                 std::string_view(key) != "studioDownloadUrl" &&
+                 std::string_view(key) != "studioSha256" &&
+                 std::string_view(key) != "studioLauncherDownloadUrl" &&
+                 std::string_view(key) != "studioLauncherSha256" &&
+                 std::string_view(key) != "launcherDownloadUrl" &&
+                 std::string_view(key) != "launcherSha256" &&
+                 json.contains(key) && json[key].is_string()) {
+            value = json[key].get<std::string>();
+        }
+#endif
     };
+    readString("downloadUrl", manifest.downloadUrl);
+    readString("sha256", manifest.sha256);
     readString("studioVersion", manifest.studioVersion);
     readString("studioDownloadUrl", manifest.studioDownloadUrl);
     readString("studioSha256", manifest.studioSha256);
@@ -452,12 +469,10 @@ UpdateManifest ParseUpdateManifest(std::string_view contents) {
     readString("launcherDownloadUrl", manifest.launcherDownloadUrl);
     readString("launcherSha256", manifest.launcherSha256);
     readString("studioLauncherVersion", manifest.studioLauncherVersion);
-    if (!manifest.downloadUrl.empty() || !manifest.sha256.empty()) {
-        if (manifest.downloadUrl.empty() || manifest.sha256.size() != 64 ||
-            !std::all_of(manifest.sha256.begin(), manifest.sha256.end(), [](unsigned char c) {
-                return std::isxdigit(c) != 0;
-            })) throw std::runtime_error("The update manifest contains an invalid URL or SHA-256 hash.");
-    }
+    if (manifest.downloadUrl.empty() || manifest.sha256.size() != 64 ||
+        !std::all_of(manifest.sha256.begin(), manifest.sha256.end(), [](unsigned char c) {
+            return std::isxdigit(c) != 0;
+        })) throw std::runtime_error("The update manifest is missing a valid client URL or SHA-256 hash.");
     if (!manifest.studioVersion.empty()) {
         const auto validHash = [](const std::string &hash) {
             return hash.size() == 64 && std::all_of(hash.begin(), hash.end(), [](unsigned char c) {
@@ -510,7 +525,7 @@ bool IsNewer(std::string_view candidate, std::string_view installed) {
     return candidate != installed;
 }
 
-fs::path FindNewestVersionedLauncher(const fs::path &launchersRoot, const wchar_t *executableName) {
+fs::path FindNewestVersionedLauncher(const fs::path &launchersRoot, const fs::path &executableName) {
     std::error_code error;
     fs::path newest;
     std::string newestVersion;
@@ -566,8 +581,8 @@ void InitializeSplashWindow() {
     ApplySplashWindowCorners();
 #endif
 
-    DWORD lightPreference = 1;
 #ifdef _WIN32
+    DWORD lightPreference = 1;
     DWORD preferenceBytes = sizeof(lightPreference);
     const LSTATUS themeRead = RegGetValueW(
         HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
@@ -808,16 +823,59 @@ void StartClient(const fs::path &client, int argc, char *argv[]) {
 }
 #else
 void StartClient(const fs::path &client, int argc, char *argv[]) {
+    std::vector<char *> arguments;
+    arguments.reserve(static_cast<size_t>(argc) + 1);
+    arguments.push_back(const_cast<char *>(client.c_str()));
+    for (int i = 1; i < argc; ++i) arguments.push_back(argv[i]);
+    arguments.push_back(nullptr);
+
+    int launchErrorPipe[2]{};
+    if (pipe(launchErrorPipe) != 0) {
+        throw std::runtime_error("Could not prepare the client process.");
+    }
+    if (fcntl(launchErrorPipe[1], F_SETFD, FD_CLOEXEC) == -1) {
+        const int error = errno;
+        close(launchErrorPipe[0]);
+        close(launchErrorPipe[1]);
+        throw std::runtime_error("Could not prepare the client process: " +
+                                 std::string(std::strerror(error)));
+    }
+
     const pid_t child = fork();
-    if (child < 0) throw std::runtime_error("Could not create the client process.");
+    if (child < 0) {
+        const int error = errno;
+        close(launchErrorPipe[0]);
+        close(launchErrorPipe[1]);
+        throw std::runtime_error("Could not create the client process: " +
+                                 std::string(std::strerror(error)));
+    }
     if (child == 0) {
-        std::vector<char *> arguments;
-        arguments.reserve(static_cast<size_t>(argc) + 1);
-        arguments.push_back(const_cast<char *>(client.c_str()));
-        for (int i = 1; i < argc; ++i) arguments.push_back(argv[i]);
-        arguments.push_back(nullptr);
+        close(launchErrorPipe[0]);
+        if (chdir(client.parent_path().c_str()) != 0) {
+            const int error = errno;
+            (void)write(launchErrorPipe[1], &error, sizeof(error));
+            _exit(127);
+        }
         execv(client.c_str(), arguments.data());
+        const int error = errno;
+        (void)write(launchErrorPipe[1], &error, sizeof(error));
         _exit(127);
+    }
+    close(launchErrorPipe[1]);
+    int launchError = 0;
+    ssize_t bytesRead = 0;
+    do {
+        bytesRead = read(launchErrorPipe[0], &launchError, sizeof(launchError));
+    } while (bytesRead < 0 && errno == EINTR);
+    const int readError = errno;
+    close(launchErrorPipe[0]);
+    if (bytesRead < 0) {
+        throw std::runtime_error("Could not confirm the client process started: " +
+                                 std::string(std::strerror(readError)));
+    }
+    if (bytesRead > 0) {
+        throw std::runtime_error("Could not start the client: " +
+                                 std::string(std::strerror(launchError)));
     }
 }
 #endif
@@ -827,13 +885,13 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
     const std::string launcherVersion = manifest.studioLauncherVersion.empty()
         ? manifest.studioVersion : manifest.studioLauncherVersion;
     const fs::path studioLauncherPath = launcherVersion.empty()
-        ? FindNewestVersionedLauncher(installRoot / "launchers", L"blubox_studio_launcher.exe")
-        : installRoot / "launchers" / launcherVersion / "blubox_studio_launcher.exe";
+        ? FindNewestVersionedLauncher(installRoot / "launchers", kStudioLauncherName)
+        : installRoot / "launchers" / launcherVersion / kStudioLauncherName;
     std::ifstream installedVersionFile(installRoot / "installed_studio_version.txt");
     std::string installedVersion;
     std::getline(installedVersionFile, installedVersion);
     const fs::path oldVersionDirectory = installRoot / "studio" / "versions" / installedVersion;
-    const fs::path oldStudio = oldVersionDirectory / "blubox_studio.exe";
+    const fs::path oldStudio = oldVersionDirectory / kStudioBinaryName;
 
     if (!hasRemoteManifest) {
         if (!installedVersion.empty() && fs::exists(oldStudio) &&
@@ -856,26 +914,21 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
         throw std::runtime_error("The update feed does not include a Blubox Studio version.");
     }
     const fs::path versionDirectory = installRoot / "studio" / "versions" / manifest.studioVersion;
-    const fs::path studioPath = versionDirectory / "blubox_studio.exe";
+    const fs::path studioPath = versionDirectory / kStudioBinaryName;
     const fs::path fontDirectory = versionDirectory / "assets" / "editor" / "fonts";
     const fs::path interfaceFont = fontDirectory / "InterVariable.ttf";
     const fs::path codeFont = fontDirectory / "JetBrainsMono-Regular.ttf";
     const auto fileMatches = [](const fs::path &path, const std::string &expectedHash) {
         if (!fs::exists(path)) return false;
-#ifdef _WIN32
         try { return Sha256File(path) == expectedHash; }
         catch (...) { return false; }
-#else
-        (void)expectedHash;
-        return false;
-#endif
     };
 
     const bool needStudio = !fileMatches(studioPath, manifest.studioSha256);
     const bool needInterfaceFont = !fileMatches(interfaceFont, manifest.studioFontSha256);
     const bool needCodeFont = !fileMatches(codeFont, manifest.studioCodeFontSha256);
     bool studioLauncherIsRunningFromTarget = false;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     if (updateStudioLauncher) {
         studioLauncherIsRunningFromTarget =
             ExecutablePath().lexically_normal() == studioLauncherPath.lexically_normal();
@@ -889,7 +942,7 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
         ", installed=" + installedVersion + ", update=" + (needInstall ? "yes" : "no"));
 
     if (needInstall) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
         SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_HIGHDPI);
         InitWindow(960, 594, "Blubox Installer");
         if (!IsWindowReady()) throw std::runtime_error("Could not open the Blubox installer window.");
@@ -898,9 +951,14 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
         fs::create_directories(versionDirectory);
         fs::create_directories(fontDirectory);
         if (needStudioLauncher) fs::create_directories(studioLauncherPath.parent_path());
-        const auto downloadVerified = [](const std::string &url, const std::string &hash,
+#ifdef __APPLE__
+        const auto downloadVerified = [&studioPath, &studioLauncherPath](
+#else
+        const auto downloadVerified = [](
+#endif
+                                         const std::string &url, const std::string &hash,
                                          const fs::path &destination, std::string_view title) {
-            const fs::path staging = fs::path(destination.wstring() + L".tmp");
+            const fs::path staging = fs::path(destination.string() + ".tmp");
             fs::remove(staging);
             DownloadHttpsFile(url, staging);
             if (Sha256File(staging) != hash) {
@@ -909,6 +967,15 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
             }
             fs::remove(destination);
             fs::rename(staging, destination);
+#ifdef __APPLE__
+            if (destination == studioPath || destination == studioLauncherPath) {
+                fs::permissions(destination,
+                    fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec |
+                    fs::perms::group_read | fs::perms::group_exec |
+                    fs::perms::others_read | fs::perms::others_exec,
+                    fs::perm_options::replace);
+            }
+#endif
         };
         try {
             LogLauncherDiagnostic("Studio bootstrap: downloading or repairing Studio files.");
@@ -927,7 +994,7 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
             CloseSplashWindow();
             for (const fs::path &destination : {studioPath, interfaceFont, codeFont, studioLauncherPath}) {
                 std::error_code removeError;
-                fs::remove(fs::path(destination.wstring() + L".tmp"), removeError);
+                fs::remove(fs::path(destination.string() + ".tmp"), removeError);
             }
             LogLauncherDiagnostic(std::string("Studio update failed: ") + error.what());
 
@@ -943,7 +1010,7 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
 #ifdef _WIN32
             if (updateStudioLauncher) {
                 const fs::path fallbackStudioLauncher = FindNewestVersionedLauncher(
-                    installRoot / "launchers", L"blubox_studio_launcher.exe");
+                    installRoot / "launchers", kStudioLauncherName);
                 if (!fallbackStudioLauncher.empty()) {
                     RegisterBluboxStudioProtocolForCurrentUser(fallbackStudioLauncher);
                     CreateBluboxStudioShortcuts(fallbackStudioLauncher);
@@ -956,12 +1023,10 @@ fs::path EnsureStudioInstalled(const UpdateManifest &manifest, bool hasRemoteMan
             CloseSplashWindow();
             for (const fs::path &destination : {studioPath, interfaceFont, codeFont, studioLauncherPath}) {
                 std::error_code removeError;
-                fs::remove(fs::path(destination.wstring() + L".tmp"), removeError);
+                fs::remove(fs::path(destination.string() + ".tmp"), removeError);
             }
             throw;
         }
-#else
-        throw std::runtime_error("Automatic installation of Blubox Studio is available only on Windows.");
 #endif
     }
 
@@ -984,9 +1049,9 @@ fs::path EnsureClientLauncherInstalled(const UpdateManifest &manifest, bool hasR
     if (!hasRemoteManifest || manifest.launcherVersion.empty()) {
         return ExecutablePath();
     }
-    const fs::path launcherPath = installRoot / "launchers" / manifest.launcherVersion / "blubox_launcher.exe";
+    const fs::path launcherPath = installRoot / "launchers" / manifest.launcherVersion / kClientLauncherName;
     bool matches = false;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     if (fs::exists(launcherPath)) {
         try { matches = Sha256File(launcherPath) == manifest.launcherSha256; }
         catch (...) { matches = false; }
@@ -994,7 +1059,7 @@ fs::path EnsureClientLauncherInstalled(const UpdateManifest &manifest, bool hasR
     if (!matches) {
         fs::create_directories(launcherPath.parent_path());
         const fs::path currentLauncher = ExecutablePath();
-        const fs::path staging = fs::path(launcherPath.wstring() + L".tmp");
+        const fs::path staging = fs::path(launcherPath.string() + ".tmp");
         fs::remove(staging);
         SetConfigFlags(FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_HIGHDPI);
         InitWindow(960, 594, "Blubox Launcher Repair");
@@ -1013,14 +1078,19 @@ fs::path EnsureClientLauncherInstalled(const UpdateManifest &manifest, bool hasR
             }
             fs::remove(launcherPath);
             fs::rename(staging, launcherPath);
+#ifdef __APPLE__
+            fs::permissions(launcherPath,
+                fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec |
+                fs::perms::group_read | fs::perms::group_exec |
+                fs::perms::others_read | fs::perms::others_exec,
+                fs::perm_options::replace);
+#endif
             CloseSplashWindow();
         } catch (...) {
             CloseSplashWindow();
             throw;
         }
     }
-#else
-    (void)matches;
 #endif
     return launcherPath;
 }
@@ -1067,13 +1137,13 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
     std::string installedVersion;
     std::getline(installedVersionFile, installedVersion);
     const fs::path previouslyInstalledClient = options.launchStudio
-        ? installRoot / "studio" / "versions" / installedVersion / "blubox_studio.exe"
-        : installRoot / "versions" / installedVersion / "blubox_client.exe";
+        ? installRoot / "studio" / "versions" / installedVersion / kStudioBinaryName
+        : installRoot / "versions" / installedVersion / kClientBinaryName;
     const bool hasPreviousInstall = !installedVersion.empty() && fs::exists(previouslyInstalledClient);
 
     UpdateManifest manifest;
     bool hasRemoteManifest = false;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
     try {
         LogLauncherDiagnostic("Reading the update manifest over HTTPS.");
         const char *configuredUrl = std::getenv("BLUBOX_MANIFEST_URL");
@@ -1114,13 +1184,13 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
         LogLauncherDiagnostic("Preparing the Studio executable.");
         const fs::path studio = EnsureStudioInstalled(manifest, hasRemoteManifest, installRoot, true);
         fs::path installedStudioLauncher = FindNewestVersionedLauncher(
-            installRoot / "launchers", L"blubox_studio_launcher.exe");
+            installRoot / "launchers", kStudioLauncherName);
         if (installedStudioLauncher.empty()) installedStudioLauncher = ExecutablePath();
         const fs::path studioLauncher = installedStudioLauncher.parent_path();
 #ifdef _WIN32
         fs::path clientLauncherDirectory;
         const fs::path existingClientLauncher = FindNewestVersionedLauncher(
-            installRoot / "launchers", L"blubox_launcher.exe");
+            installRoot / "launchers", kClientLauncherName);
         if (!existingClientLauncher.empty()) clientLauncherDirectory = existingClientLauncher.parent_path();
         if (hasRemoteManifest && !manifest.launcherVersion.empty()) {
             try {
@@ -1136,7 +1206,7 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
         }
 #else
         const fs::path existingClientLauncher = FindNewestVersionedLauncher(
-            installRoot / "launchers", L"blubox_launcher.exe");
+            installRoot / "launchers", kClientLauncherName);
         const fs::path clientLauncherDirectory = existingClientLauncher.empty()
             ? fs::path{} : existingClientLauncher.parent_path();
 #endif
@@ -1158,7 +1228,7 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
     }
     const fs::path installedLauncher = EnsureClientLauncherInstalled(manifest, hasRemoteManifest, installRoot);
     const fs::path installedStudioLauncher = FindNewestVersionedLauncher(
-        installRoot / "launchers", L"blubox_studio_launcher.exe");
+        installRoot / "launchers", kStudioLauncherName);
     const fs::path studioLauncher = installedStudioLauncher.empty()
         ? fs::path{} : installedStudioLauncher.parent_path();
     PruneVersionDirectories(installRoot / "launchers",
@@ -1172,7 +1242,7 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
 
     const std::string targetVersion = manifest.version;
     const fs::path versionDirectory = installRoot / "versions" / targetVersion;
-    fs::path installedClient = versionDirectory / "blubox_client.exe";
+    fs::path installedClient = versionDirectory / kClientBinaryName;
     const bool remoteIsNewer = hasPreviousInstall && IsNewer(targetVersion, installedVersion);
     if (hasPreviousInstall && !remoteIsNewer) installedClient = previouslyInstalledClient;
     bool cachedClientMatchesManifest = fs::exists(installedClient);
@@ -1199,25 +1269,30 @@ int RunLauncher(const LaunchOptions &options, int argc, char *argv[]) {
         SetTargetFPS(60);
         InitializeSplashWindow();
         fs::create_directories(versionDirectory);
-        const fs::path stagingClient = versionDirectory / "blubox_client.exe.tmp";
+        const fs::path stagingClient = versionDirectory / (kClientBinaryName.string() + ".tmp");
         try {
             fs::remove(stagingClient);
             if (hasRemoteManifest && !manifest.downloadUrl.empty()) {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
                 LogLauncherDiagnostic("Downloading the client executable.");
                 DownloadHttpsFile(manifest.downloadUrl, stagingClient);
                 if (Sha256File(stagingClient) != manifest.sha256) {
                     throw std::runtime_error("The downloaded client SHA-256 checksum does not match.");
                 }
                 LogLauncherDiagnostic("Client download and SHA-256 verification completed.");
-#else
-                throw std::runtime_error("Automatic downloads are available only on Windows.");
 #endif
             } else {
-                CopyWithProgress(launcherDirectory / "blubox_client.exe", stagingClient);
+                CopyWithProgress(launcherDirectory / kClientBinaryName, stagingClient);
             }
             fs::remove(installedClient);
             fs::rename(stagingClient, installedClient);
+#ifdef __APPLE__
+            fs::permissions(installedClient,
+                fs::perms::owner_read | fs::perms::owner_write | fs::perms::owner_exec |
+                fs::perms::group_read | fs::perms::group_exec |
+                fs::perms::others_read | fs::perms::others_exec,
+                fs::perm_options::replace);
+#endif
             DrawProgress(1.0f, "Starting Blubox...", 0, 0, 0.0);
             CloseSplashWindow();
         } catch (const std::exception &error) {

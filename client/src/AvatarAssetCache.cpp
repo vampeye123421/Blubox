@@ -1,5 +1,6 @@
 #include "AvatarAssetCache.hpp"
 #include "RaylibCompat.hpp"
+#include "HttpClient.hpp"
 #include "BluboxR6Character.hpp"
 #include "BluboxR6JumpAnimation.hpp"
 #include "BluboxR6WalkAnimation.hpp"
@@ -29,23 +30,10 @@
 #include <string_view>
 #include <vector>
 
-#if defined(_WIN32)
-#define Rectangle Win32Rectangle
-#define CloseWindow Win32CloseWindow
-#define ShowCursor Win32ShowCursor
-#define DrawText Win32DrawText
-#define DrawTextEx Win32DrawTextEx
-#define LoadImage Win32LoadImage
-#define PlaySound Win32PlaySound
-#include <windows.h>
-#include <winhttp.h>
-#undef PlaySound
-#undef LoadImage
-#undef DrawTextEx
-#undef DrawText
-#undef ShowCursor
-#undef CloseWindow
-#undef Rectangle
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace {
@@ -55,62 +43,31 @@ constexpr std::string_view kAssetPath = "/storage/v1/object/public/marketplace-a
 constexpr float kAvatarTargetHeight = 2.24f;
 constexpr float kAnimationFramesPerSecond = 60.0f;
 
-#if defined(_WIN32)
-std::wstring ToWide(std::string_view text) {
-    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
-                                           static_cast<int>(text.size()), nullptr, 0);
-    if (count <= 0) return {};
-    std::wstring result(static_cast<std::size_t>(count), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), result.data(), count);
-    return result;
+unsigned long long CurrentProcessId() {
+#ifdef _WIN32
+    return static_cast<unsigned long long>(_getpid());
+#else
+    return static_cast<unsigned long long>(getpid());
+#endif
 }
 
 bool DownloadAsset(std::string_view url, std::size_t maximum, std::vector<unsigned char>& output) {
     if (!url.starts_with("https://") || url.size() > 2048 || url.find(kAssetPath) == std::string_view::npos ||
         url.find_first_of("\\\r\n") != std::string_view::npos || url.find('@') != std::string_view::npos) return false;
-    const std::wstring wide = ToWide(url);
-    if (wide.empty()) return false;
-    URL_COMPONENTS parts{};
-    parts.dwStructSize = sizeof(parts);
-    parts.dwSchemeLength = parts.dwHostNameLength = parts.dwUrlPathLength = parts.dwExtraInfoLength = static_cast<DWORD>(-1);
-    if (!WinHttpCrackUrl(wide.c_str(), static_cast<DWORD>(wide.size()), 0, &parts) ||
-        parts.nScheme != INTERNET_SCHEME_HTTPS || parts.dwHostNameLength == 0) return false;
-    const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
-    const std::wstring path(parts.lpszUrlPath, parts.dwUrlPathLength);
-    std::wstring target = path;
-    if (parts.dwExtraInfoLength) target.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-    HINTERNET session = WinHttpOpen(L"BluboxClient/AvatarAssets", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) return false;
-    WinHttpSetTimeouts(session, 3000, 3000, 5000, 5000);
-    HINTERNET connection = WinHttpConnect(session, host.c_str(), parts.nPort, 0);
-    HINTERNET request = connection ? WinHttpOpenRequest(connection, L"GET", target.c_str(), nullptr,
-        WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
-    bool ok = false;
-    if (request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-        WinHttpReceiveResponse(request, nullptr)) {
-        DWORD status = 0, statusSize = sizeof(status);
-        if (WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize, WINHTTP_NO_HEADER_INDEX) && status == 200) {
-            for (;;) {
-                DWORD available = 0;
-                if (!WinHttpQueryDataAvailable(request, &available)) break;
-                if (!available) { ok = !output.empty(); break; }
-                if (output.size() + available > maximum) { output.clear(); break; }
-                const auto old = output.size();
-                output.resize(old + available);
-                DWORD received = 0;
-                if (!WinHttpReadData(request, output.data() + old, available, &received)) { output.clear(); break; }
-                output.resize(old + received);
-            }
-        }
+    try {
+        blubox::platform::HttpRequest request;
+        request.url = std::string(url);
+        request.timeoutMs = 5000;
+        request.maxResponseBytes = maximum;
+        const auto response = blubox::platform::PerformHttpRequest(request);
+        if (response.status != 200 || response.body.empty()) return false;
+        output.assign(response.body.begin(), response.body.end());
+        return true;
+    } catch (...) {
+        output.clear();
+        return false;
     }
-    if (request) WinHttpCloseHandle(request);
-    if (connection) WinHttpCloseHandle(connection);
-    WinHttpCloseHandle(session);
-    return ok;
 }
-#endif
 
 std::string ImageFileType(const std::string& url, const std::vector<unsigned char>& bytes) {
     if (bytes.size() >= 8 && bytes[0] == 0x89 && bytes[1] == 'P' &&
@@ -990,7 +947,7 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
     if (baseCharacterLoaded_) return baseCharacter_.meshCount > 0;
     baseCharacterLoaded_ = true;
     lightingShader_ = lightingShader;
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__APPLE__)
     if (blubox::kR6CharacterDataSize < 20 ||
         blubox::kR6CharacterData[0] != 'g' || blubox::kR6CharacterData[1] != 'l' ||
         blubox::kR6CharacterData[2] != 'T' || blubox::kR6CharacterData[3] != 'F') {
@@ -1021,7 +978,7 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
     const auto tempRoot = std::filesystem::temp_directory_path(error);
     if (error) return false;
     const auto tempPath = tempRoot / ("blubox-r6-character-" +
-        std::to_string(static_cast<unsigned long long>(GetCurrentProcessId())) + ".glb");
+        std::to_string(CurrentProcessId()) + ".glb");
     {
         std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
         if (!output || !output.write(reinterpret_cast<const char*>(blubox::kR6CharacterData),
@@ -1144,7 +1101,7 @@ bool AvatarAssetCache::LoadBaseCharacter(const Shader& lightingShader) {
                data[2] == 'T' && data[3] == 'F';
     };
 
-    const auto processId = static_cast<unsigned long long>(GetCurrentProcessId());
+    const auto processId = CurrentProcessId();
     const auto walkPath = tempRoot / ("blubox-r6-walk-" + std::to_string(processId) + ".glb");
     const auto jumpPath = tempRoot / ("blubox-r6-jump-" + std::to_string(processId) + ".glb");
 
@@ -1314,7 +1271,7 @@ AvatarAssetCache::TextureEntry& AvatarAssetCache::texture(const std::string& url
     if (entry.texture.id || (entry.attempted && GetTime() < entry.retryAt)) return entry;
     entry.attempted = true;
     entry.retryAt = GetTime() + 10.0;
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__APPLE__)
     std::vector<unsigned char> bytes;
     if (!DownloadAsset(url, kMaxTextureBytes, bytes)) {
         TraceLog(LOG_WARNING, "Could not download an avatar clothing texture.");
@@ -1339,7 +1296,7 @@ AvatarAssetCache::TextureEntry& AvatarAssetCache::itemTexture(const std::string&
     if (entry.texture.id || (entry.attempted && GetTime() < entry.retryAt)) return entry;
     entry.attempted = true;
     entry.retryAt = GetTime() + 10.0;
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__APPLE__)
     std::vector<unsigned char> bytes;
     if (!DownloadAsset(url, kMaxTextureBytes, bytes)) {
         TraceLog(LOG_WARNING, "Could not download a marketplace avatar texture.");
@@ -1364,15 +1321,17 @@ AvatarAssetCache::ModelEntry& AvatarAssetCache::model(const std::string& url, co
     auto& entry = models_[modelKey];
     if (entry.attempted) return entry;
     entry.attempted = true;
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__APPLE__)
     std::vector<unsigned char> bytes;
     if (!DownloadAsset(url, kMaxModelBytes, bytes) || bytes.size() < 12 ||
         bytes[0] != 'g' || bytes[1] != 'l' || bytes[2] != 'T' || bytes[3] != 'F') return entry;
-    wchar_t tempRoot[MAX_PATH]{};
-    if (!GetTempPathW(MAX_PATH, tempRoot)) return entry;
+    std::error_code tempError;
+    const auto tempRoot = std::filesystem::temp_directory_path(tempError);
+    if (tempError) return entry;
     const auto fileHash = std::hash<std::string>{}(modelKey);
-    const std::filesystem::path path = std::filesystem::path(tempRoot) /
-        (L"blubox-avatar-" + std::to_wstring(fileHash) + L".glb");
+    const std::filesystem::path path = tempRoot /
+        ("blubox-avatar-" + std::to_string(CurrentProcessId()) + "-" +
+         std::to_string(fileHash) + ".glb");
     {
         std::ofstream file(path, std::ios::binary | std::ios::trunc);
         if (!file || !file.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) return entry;
