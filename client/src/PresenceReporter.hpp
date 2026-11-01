@@ -16,10 +16,11 @@ public:
     void Stop() noexcept;
 
 private:
-    void Run(std::stop_token stopToken);
+    void Run();
 
     std::mutex mutex_;
-    std::condition_variable_any wake_;
+    std::condition_variable wake_;
     std::string token_;
-    std::jthread worker_;
+    std::thread worker_;
+    bool stopRequested_ = false;
 };

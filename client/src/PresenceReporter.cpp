@@ -51,27 +51,30 @@ void PresenceReporter::Start(std::string token) {
     {
         std::lock_guard lock(mutex_);
         token_ = std::move(token);
+        stopRequested_ = false;
     }
-    worker_ = std::jthread([this](std::stop_token stopToken) { Run(stopToken); });
+    worker_ = std::thread([this] { Run(); });
 }
 
 void PresenceReporter::Stop() noexcept {
-    if (worker_.joinable()) {
-        worker_.request_stop();
-        wake_.notify_all();
-        worker_.join();
+    {
+        std::lock_guard lock(mutex_);
+        stopRequested_ = true;
     }
+    wake_.notify_all();
+    if (worker_.joinable()) worker_.join();
     std::lock_guard lock(mutex_);
     SecureErase(token_);
 }
 
-void PresenceReporter::Run(std::stop_token stopToken) {
+void PresenceReporter::Run() {
     constexpr std::string_view heartbeatRoute = "/presence/heartbeat";
     constexpr std::string_view endRoute = "/presence/end";
-    while (!stopToken.stop_requested()) {
+    while (true) {
         std::string token;
         {
             std::lock_guard lock(mutex_);
+            if (stopRequested_) break;
             token = token_;
         }
         if (!token.empty() && !PostPresence(heartbeatRoute, token)) {
@@ -81,7 +84,8 @@ void PresenceReporter::Run(std::stop_token stopToken) {
         SecureErase(token);
 
         std::unique_lock lock(mutex_);
-        wake_.wait_for(lock, stopToken, std::chrono::seconds(5), [] { return false; });
+        wake_.wait_for(lock, std::chrono::seconds(5), [this] { return stopRequested_; });
+        if (stopRequested_) break;
     }
 
     std::string token;
