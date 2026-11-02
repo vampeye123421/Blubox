@@ -94,21 +94,22 @@ private:
         std::chrono::steady_clock::time_point due;
     };
 
-    void run(std::stop_token stop);
+    void run();
     void analyzeSource(SemanticJob job);
 
     mutable std::mutex mutex_;
-    std::condition_variable_any wake_;
+    std::condition_variable wake_;
     std::unordered_map<std::string, SemanticJob> pendingSemantic_;
-    std::atomic<std::shared_ptr<const SemanticSnapshotMap>> semanticSnapshots_;
+    std::shared_ptr<const SemanticSnapshotMap> semanticSnapshots_;
     std::filesystem::path pendingCatalogPath_;
     bool catalogLoadPending_ = false;
     std::uint64_t pendingRevision_ = 0;
     std::string catalogError_;
-    std::atomic<std::shared_ptr<const intellisense::CompletionDatabase>> database_;
-    std::atomic<std::shared_ptr<const std::vector<intellisense::WorkspaceChild>>> workspaceChildren_;
+    std::shared_ptr<const intellisense::CompletionDatabase> database_;
+    std::shared_ptr<const std::vector<intellisense::WorkspaceChild>> workspaceChildren_;
     std::atomic<std::uint64_t> candidateGeneration_{1};
-    std::jthread worker_;
+    std::thread worker_;
+    std::atomic<bool> stopRequested_{false};
 };
 
 } // namespace blubox::engine::editor

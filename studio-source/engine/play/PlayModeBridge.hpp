@@ -36,7 +36,7 @@ class PlayModeBridge {
   [[nodiscard]] std::optional<studio::MapDocument> serverWorldSnapshot() const;
   [[nodiscard]] std::string lastError() const;
  private:
-  void runServer(std::stop_token stopToken);
+  void runServer();
   void setFailure(std::string message);
   studio::MapDocument& editorWorld_;
   PlayConfig config_{};
@@ -45,7 +45,8 @@ class PlayModeBridge {
   RuntimeSnapshot snapshot_{};
   std::unique_ptr<runtime::ServerRuntime> server_;
   std::unique_ptr<runtime::ClientRuntime> client_;
-  std::jthread serverThread_;
+  std::thread serverThread_;
+  std::atomic<bool> serverStopRequested_{false};
   mutable std::mutex errorMutex_;
   std::string lastError_;
   void* standaloneProcess_ = nullptr;

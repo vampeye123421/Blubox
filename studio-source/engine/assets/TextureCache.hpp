@@ -4,6 +4,7 @@
 
 #include <raylib.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -52,20 +53,23 @@ private:
     struct Completion { TextureId id = 0; Image image{}; std::string hash; std::string error; };
     struct SharedTexture { Texture2D texture{}; std::uint32_t entryReferences = 0; };
 
-    void worker(std::stop_token stop);
+    void startWorker();
+    void stopWorker();
+    void worker();
     static std::string hashFile(const std::filesystem::path& path, std::string& error);
     static TextureId pathId(const std::filesystem::path& path) noexcept;
 
     const std::size_t maximumFileBytes_;
     const int maximumDimension_;
     mutable std::mutex mutex_;
-    std::condition_variable_any wake_;
+    std::condition_variable wake_;
     std::unordered_map<TextureId, Entry> entries_;
     std::unordered_map<std::string, SharedTexture> texturesByHash_;
     std::vector<TextureId> queue_;
     std::vector<Completion> completed_;
     std::vector<std::string> pendingTextureReleases_;
-    std::jthread worker_;
+    std::thread worker_;
+    std::atomic<bool> stopRequested_{false};
 };
 
 } // namespace blubox::engine::assets

@@ -204,7 +204,8 @@ bool PlayModeBridge::start(const PlayConfig& config, PlayError& error) {
       }
     }
   }
-  serverThread_ = std::jthread([this](std::stop_token stopToken) { runServer(stopToken); });
+  serverStopRequested_.store(false, std::memory_order_release);
+  serverThread_ = std::thread([this] { runServer(); });
   const auto deadline = std::chrono::steady_clock::now() + config_.clientConnectTimeout;
   while (client_ && config_.enableNetworking && !client_->authenticated() && std::chrono::steady_clock::now() < deadline) {
     if (state() == PlayModeState::Failed) break;
@@ -219,12 +220,12 @@ bool PlayModeBridge::start(const PlayConfig& config, PlayError& error) {
   error.message.clear();
   return true;
 }
-void PlayModeBridge::runServer(std::stop_token stopToken) {
+void PlayModeBridge::runServer() {
   using clock = std::chrono::steady_clock;
   const auto step = std::max(std::chrono::milliseconds(1), config_.fixedStep);
   auto next = clock::now();
   try {
-    while (!stopToken.stop_requested()) {
+    while (!serverStopRequested_.load(std::memory_order_acquire)) {
       if (!paused_.load()) server_->tick(std::chrono::duration<double>(step).count());
       next += step;
       std::this_thread::sleep_until(next);
@@ -302,7 +303,7 @@ void PlayModeBridge::stop() {
     client_.reset();
   }
   if (serverThread_.joinable()) {
-    serverThread_.request_stop();
+    serverStopRequested_.store(true, std::memory_order_release);
     serverThread_.join();
   } else if (server_) server_->shutdown();
   server_.reset();

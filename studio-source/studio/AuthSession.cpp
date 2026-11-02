@@ -38,8 +38,8 @@ constexpr std::string_view kEntropyText = "Blubox Studio session v1";
 constexpr std::string_view kProtocolPrefix = "blubox-studio://";
 constexpr std::string_view kBase64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 #ifdef __APPLE__
-constexpr CFStringRef kKeychainService = CFSTR("com.blubox.studio.session");
-constexpr CFStringRef kKeychainAccount = CFSTR("session");
+const CFStringRef kKeychainService = CFSTR("com.blubox.studio.session");
+const CFStringRef kKeychainAccount = CFSTR("session");
 #endif
 
 void SecureEraseBytes(unsigned char* bytes, std::size_t size) noexcept {
@@ -510,7 +510,7 @@ StudioInstanceLock::StudioInstanceLock() {
     handle_ = mutex;
     primary_ = GetLastError() != ERROR_ALREADY_EXISTS;
 #elif defined(__APPLE__)
-    const auto lockPath = Path().parent_path() / "studio.lock";
+    const auto lockPath = SessionStore::Path().parent_path() / "studio.lock";
     const int descriptor = open(lockPath.c_str(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
     if (descriptor < 0) throw std::runtime_error("Could not create the Blubox Studio single-instance lock.");
     handle_ = reinterpret_cast<void*>(static_cast<intptr_t>(descriptor + 1));

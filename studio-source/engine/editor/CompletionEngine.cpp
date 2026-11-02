@@ -115,15 +115,21 @@ struct RankedItem {
 } // namespace
 
 CompletionEngine::CompletionEngine() {
-    database_.store(CompletionDatabase::CreateBuiltin(), std::memory_order_release);
-    semanticSnapshots_.store(std::make_shared<const SemanticSnapshotMap>(), std::memory_order_release);
-    workspaceChildren_.store(std::make_shared<const std::vector<WorkspaceChild>>(), std::memory_order_release);
-    worker_ = std::jthread([this](std::stop_token stop) { run(stop); });
+    std::shared_ptr<const CompletionDatabase> database = CompletionDatabase::CreateBuiltin();
+    std::atomic_store_explicit(&database_, std::move(database), std::memory_order_release);
+    std::atomic_store_explicit(&semanticSnapshots_,
+                               std::make_shared<const SemanticSnapshotMap>(),
+                               std::memory_order_release);
+    std::atomic_store_explicit(&workspaceChildren_,
+                               std::make_shared<const std::vector<WorkspaceChild>>(),
+                               std::memory_order_release);
+    worker_ = std::thread([this] { run(); });
 }
 
 CompletionEngine::~CompletionEngine() {
-    worker_.request_stop();
+    stopRequested_.store(true, std::memory_order_release);
     wake_.notify_all();
+    if (worker_.joinable()) worker_.join();
 }
 
 CompletionResponse CompletionEngine::completeLine(std::string_view line, int lineNumber,
@@ -131,7 +137,7 @@ CompletionResponse CompletionEngine::completeLine(std::string_view line, int lin
                                                    bool explicitInvocation) const {
     CompletionResponse response;
     response.line = lineNumber;
-    const auto database = database_.load(std::memory_order_acquire);
+    const auto database = std::atomic_load_explicit(&database_, std::memory_order_acquire);
     if (!database) return response;
     const auto semantic = semanticSnapshot(scriptId);
     const CompletionContext context = ContextAnalyzer::Analyze(line, cursorColumn, *database,
@@ -148,7 +154,7 @@ CompletionResponse CompletionEngine::completeLine(std::string_view line, int lin
     response.active = true;
 
     std::vector<const CompletionEntry*> candidates = database->query(context);
-    const auto workspaceChildren = workspaceChildren_.load(std::memory_order_acquire);
+    const auto workspaceChildren = std::atomic_load_explicit(&workspaceChildren_, std::memory_order_acquire);
     std::vector<RankedItem> ranked;
     ranked.reserve(std::min<std::size_t>(candidates.size() + 64, 2048));
 
@@ -251,7 +257,7 @@ void CompletionEngine::requestCatalogLoad(std::filesystem::path path) {
 
 std::shared_ptr<const SemanticSnapshot> CompletionEngine::semanticSnapshot(std::string_view scriptId) const {
     if (scriptId.empty()) return {};
-    const auto snapshots = semanticSnapshots_.load(std::memory_order_acquire);
+    const auto snapshots = std::atomic_load_explicit(&semanticSnapshots_, std::memory_order_acquire);
     if (!snapshots) return {};
     const auto found = snapshots->find(scriptId);
     return found == snapshots->end() ? std::shared_ptr<const SemanticSnapshot>{} : found->second;
@@ -262,8 +268,10 @@ void CompletionEngine::setWorkspaceChildren(std::vector<WorkspaceChild> children
         if (child.lowerName.empty()) child.lowerName = Lower(child.name);
         if (child.typeName.empty()) child.typeName = "Part";
     }
-    workspaceChildren_.store(std::make_shared<const std::vector<WorkspaceChild>>(std::move(children)),
-                             std::memory_order_release);
+    std::atomic_store_explicit(
+        &workspaceChildren_,
+        std::make_shared<const std::vector<WorkspaceChild>>(std::move(children)),
+        std::memory_order_release);
     candidateGeneration_.fetch_add(1, std::memory_order_acq_rel);
 }
 
@@ -272,15 +280,18 @@ std::string CompletionEngine::lastCatalogError() const {
     return catalogError_;
 }
 
-void CompletionEngine::run(std::stop_token stop) {
-    while (!stop.stop_requested()) {
+void CompletionEngine::run() {
+    while (!stopRequested_.load(std::memory_order_acquire)) {
         std::filesystem::path catalogPath;
         SemanticJob semanticJob;
         bool loadCatalog = false;
         {
             std::unique_lock lock(mutex_);
-            wake_.wait(lock, stop, [&] { return catalogLoadPending_ || !pendingSemantic_.empty(); });
-            if (stop.stop_requested()) return;
+            wake_.wait(lock, [&] {
+                return stopRequested_.load(std::memory_order_acquire) ||
+                    catalogLoadPending_ || !pendingSemantic_.empty();
+            });
+            if (stopRequested_.load(std::memory_order_acquire)) return;
             if (catalogLoadPending_) {
                 catalogPath = std::move(pendingCatalogPath_);
                 catalogLoadPending_ = false;
@@ -292,8 +303,9 @@ void CompletionEngine::run(std::stop_token stop) {
                 const auto due = earliest->second.due;
                 const std::uint64_t revision = pendingRevision_;
                 if (std::chrono::steady_clock::now() < due) {
-                    wake_.wait_until(lock, stop, due, [&] {
-                        return catalogLoadPending_ || pendingRevision_ != revision;
+                    wake_.wait_until(lock, due, [&] {
+                        return stopRequested_.load(std::memory_order_acquire) ||
+                            catalogLoadPending_ || pendingRevision_ != revision;
                     });
                     continue;
                 }
@@ -305,11 +317,11 @@ void CompletionEngine::run(std::stop_token stop) {
         if (loadCatalog) {
             try {
                 const std::string source = ReadCatalogFile(catalogPath);
-                const auto base = database_.load(std::memory_order_acquire);
+                const auto base = std::atomic_load_explicit(&database_, std::memory_order_acquire);
                 std::string error;
                 auto indexed = CompletionIndexBuilder::Build(source, *base, &error);
                 if (!indexed) throw std::runtime_error(error.empty() ? "Catalog indexing failed" : error);
-                database_.store(std::move(indexed), std::memory_order_release);
+                std::atomic_store_explicit(&database_, std::move(indexed), std::memory_order_release);
                 candidateGeneration_.fetch_add(1, std::memory_order_acq_rel);
                 std::lock_guard lock(mutex_);
                 catalogError_.clear();
@@ -324,12 +336,12 @@ void CompletionEngine::run(std::stop_token stop) {
 }
 
 void CompletionEngine::analyzeSource(SemanticJob job) {
-    const auto database = database_.load(std::memory_order_acquire);
+    const auto database = std::atomic_load_explicit(&database_, std::memory_order_acquire);
     if (!database) return;
     auto snapshot = std::make_shared<SemanticSnapshot>();
     snapshot->scriptId = job.scriptId;
     snapshot->generation = job.generation;
-    const auto children = workspaceChildren_.load(std::memory_order_acquire);
+    const auto children = std::atomic_load_explicit(&workspaceChildren_, std::memory_order_acquire);
     if (children) snapshot->workspaceChildren = *children;
 
     static const std::regex localDeclaration(
@@ -353,14 +365,15 @@ void CompletionEngine::analyzeSource(SemanticJob job) {
         ++lineNumber;
     }
 
-    const auto previous = semanticSnapshots_.load(std::memory_order_acquire);
+    const auto previous = std::atomic_load_explicit(&semanticSnapshots_, std::memory_order_acquire);
     if (previous) {
         const auto existing = previous->find(job.scriptId);
         if (existing != previous->end() && existing->second->generation > job.generation) return;
     }
     auto updated = std::make_shared<SemanticSnapshotMap>(previous ? *previous : SemanticSnapshotMap{});
     (*updated)[job.scriptId] = std::move(snapshot);
-    semanticSnapshots_.store(std::move(updated), std::memory_order_release);
+    std::shared_ptr<const SemanticSnapshotMap> published = std::move(updated);
+    std::atomic_store_explicit(&semanticSnapshots_, std::move(published), std::memory_order_release);
 }
 
 } // namespace blubox::engine::editor

@@ -19,13 +19,12 @@ std::string HexHash(std::uint64_t value) {
 }
 
 TextureCache::TextureCache(std::size_t maximumFileBytes, int maximumDimension)
-    : maximumFileBytes_(maximumFileBytes), maximumDimension_(maximumDimension),
-      worker_([this](std::stop_token stop) { worker(stop); }) {}
+    : maximumFileBytes_(maximumFileBytes), maximumDimension_(maximumDimension) {
+    startWorker();
+}
 
 TextureCache::~TextureCache() {
-    worker_.request_stop();
-    wake_.notify_all();
-    if (worker_.joinable()) worker_.join();
+    stopWorker();
     // Texture destruction requires a live graphics context. Call clear() explicitly
     // before closing Raylib; this fallback only frees CPU-side Images.
     for (auto& completion : completed_) if (completion.image.data) UnloadImage(completion.image);
@@ -103,14 +102,27 @@ std::string TextureCache::hashFile(const std::filesystem::path& path, std::strin
     return HexHash(hash);
 }
 
-void TextureCache::worker(std::stop_token stop) {
-    while (!stop.stop_requested()) {
+void TextureCache::startWorker() {
+    stopRequested_.store(false, std::memory_order_release);
+    worker_ = std::thread([this] { worker(); });
+}
+
+void TextureCache::stopWorker() {
+    stopRequested_.store(true, std::memory_order_release);
+    wake_.notify_all();
+    if (worker_.joinable()) worker_.join();
+}
+
+void TextureCache::worker() {
+    while (!stopRequested_.load(std::memory_order_acquire)) {
         TextureId id = 0;
         std::filesystem::path path;
         {
             std::unique_lock lock(mutex_);
-            wake_.wait(lock, stop, [&] { return !queue_.empty(); });
-            if (stop.stop_requested()) break;
+            wake_.wait(lock, [this] {
+                return stopRequested_.load(std::memory_order_acquire) || !queue_.empty();
+            });
+            if (stopRequested_.load(std::memory_order_acquire)) break;
             id = queue_.front(); queue_.erase(queue_.begin());
             auto found = entries_.find(id);
             if (found == entries_.end()) continue;
@@ -224,17 +236,17 @@ std::uint32_t TextureCache::referenceCount(TextureId id) const {
 }
 
 void TextureCache::clear() {
-    worker_.request_stop();
-    wake_.notify_all();
-    if (worker_.joinable()) worker_.join();
-    std::lock_guard lock(mutex_);
-    for (auto& completion : completed_) if (completion.image.data) UnloadImage(completion.image);
-    completed_.clear();
-    for (auto& [id, entry] : entries_) { (void)id; if (entry.decoded.data) UnloadImage(entry.decoded); }
-    entries_.clear(); queue_.clear();
-    for (auto& [hash, storage] : texturesByHash_) { (void)hash; if (storage.texture.id) UnloadTexture(storage.texture); }
-    texturesByHash_.clear(); pendingTextureReleases_.clear();
-    worker_ = std::jthread([this](std::stop_token stop) { worker(stop); });
+    stopWorker();
+    {
+        std::lock_guard lock(mutex_);
+        for (auto& completion : completed_) if (completion.image.data) UnloadImage(completion.image);
+        completed_.clear();
+        for (auto& [id, entry] : entries_) { (void)id; if (entry.decoded.data) UnloadImage(entry.decoded); }
+        entries_.clear(); queue_.clear();
+        for (auto& [hash, storage] : texturesByHash_) { (void)hash; if (storage.texture.id) UnloadTexture(storage.texture); }
+        texturesByHash_.clear(); pendingTextureReleases_.clear();
+    }
+    startWorker();
 }
 
 } // namespace blubox::engine::assets
