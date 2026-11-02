@@ -40,12 +40,12 @@
 #else
   #define SetupAppId "{{26327D1E-B98C-483C-9E66-8B40F7DD543A}"
   #define SetupAppName "Blubox Setup"
-  #define SetupDir "{tmp}\BluboxSetup"
+  #define SetupDir "{localappdata}\Programs\Blubox"
   #define SetupVersion AppVersion
   #define SetupOutput "Blubox-Setup-" + AppVersion
-  #define UninstallableFlag "no"
-  #define CreateAppDirFlag "no"
-  #define UninstallIcon "BluboxClient.exe"
+  #define UninstallableFlag "yes"
+  #define CreateAppDirFlag "yes"
+  #define UninstallIcon "Client\BluboxClient.exe"
   #define OutputDirectory DistDir
   #define InstallerLicense AddBackslash(StageDir) + "Blubox-Bundle-LICENSE.txt"
 #endif
@@ -132,35 +132,60 @@ Type: files; Name: "{localappdata}\BluboxStudio\session.json"
 
 #if ProductMode == "Bundle"
 [Files]
-Source: "{#DistDir}\child-installers\Blubox-Client-Setup-{#ClientVersion}.exe"; DestDir: "{tmp}"; Flags: ignoreversion
-Source: "{#DistDir}\child-installers\Blubox-Studio-Setup-{#StudioVersion}.exe"; DestDir: "{tmp}"; Flags: ignoreversion
+Source: "{#StageDir}\BluboxClient.exe"; DestDir: "{app}\Client"; Flags: ignoreversion
+Source: "{#StageDir}\BluboxClient-LICENSE.txt"; DestDir: "{app}\Client"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "{#StageDir}\licenses\*"; DestDir: "{app}\Client\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageDir}\BluboxStudio.exe"; DestDir: "{app}\Studio"; Flags: ignoreversion
+Source: "{#StageDir}\BluboxStudio-LICENSE.txt"; DestDir: "{app}\Studio"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "{#StageDir}\assets\editor\luau_api_catalog.json"; DestDir: "{app}\Studio\assets\editor"; Flags: ignoreversion
+Source: "{#StageDir}\assets\editor\fonts\InterVariable.ttf"; DestDir: "{app}\Studio\assets\editor\fonts"; Flags: ignoreversion
+Source: "{#StageDir}\assets\editor\fonts\JetBrainsMonoRegular.ttf"; DestDir: "{app}\Studio\assets\editor\fonts"; Flags: ignoreversion
+Source: "{#StageDir}\licenses\Inter-LICENSE.txt"; DestDir: "{app}\Studio\licenses"; Flags: ignoreversion
+Source: "{#StageDir}\licenses\JetBrainsMono-LICENSE.txt"; DestDir: "{app}\Studio\licenses"; Flags: ignoreversion
+Source: "{#StageDir}\licenses\ImGuiColorTextEdit-LICENSE.txt"; DestDir: "{app}\Studio\licenses"; Flags: ignoreversion
+Source: "{#StageDir}\licenses\THIRD_PARTY_LICENSES.md"; DestDir: "{app}\Studio\licenses"; Flags: ignoreversion
+
+[Icons]
+Name: "{autodesktop}\Blubox"; Filename: "{app}\Client\BluboxClient.exe"
+Name: "{group}\Blubox Client"; Filename: "{app}\Client\BluboxClient.exe"
+Name: "{autodesktop}\Blubox Studio"; Filename: "{app}\Studio\BluboxStudio.exe"
+Name: "{group}\Blubox Studio"; Filename: "{app}\Studio\BluboxStudio.exe"
+Name: "{group}\Uninstall Blubox"; Filename: "{uninstallexe}"
+
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\blubox"; ValueType: string; ValueName: ""; ValueData: "URL:Blubox Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\blubox"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\blubox\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\Client\BluboxClient.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\blubox\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Client\BluboxClient.exe"" ""%1"""
+Root: HKCU; Subkey: "Software\Blubox\Legal\Client"; ValueType: string; ValueName: "AcceptedEulaVersion"; ValueData: "{#EulaVersion}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Blubox\Legal\Client"; ValueType: string; ValueName: "AcceptedAtLocal"; ValueData: "{code:GetAcceptanceTimestamp}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\blubox-studio"; ValueType: string; ValueName: ""; ValueData: "URL:Blubox Studio Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\blubox-studio"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\blubox-studio\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Studio\BluboxStudio.exe"" ""%1"""
+Root: HKCU; Subkey: "Software\Blubox\Legal\Studio"; ValueType: string; ValueName: "AcceptedEulaVersion"; ValueData: "{#EulaVersion}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Blubox\Legal\Studio"; ValueType: string; ValueName: "AcceptedAtLocal"; ValueData: "{code:GetAcceptanceTimestamp}"; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{5F1E3447-4F5B-43CE-8E96-FA67BE6F17A1}_is1"; ValueType: none; Flags: deletekey
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Uninstall\{{855A8507-8E44-4A19-9DB7-B33A43C01D44}_is1"; ValueType: none; Flags: deletekey
+
+[InstallDelete]
+Type: files; Name: "{app}\Client\unins000.exe"
+Type: files; Name: "{app}\Client\unins000.dat"
+Type: files; Name: "{app}\Studio\unins000.exe"
+Type: files; Name: "{app}\Studio\unins000.dat"
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\Client"
+Type: filesandordirs; Name: "{app}\Studio"
+Type: filesandordirs; Name: "{localappdata}\Blubox\versions"
+Type: files; Name: "{localappdata}\Blubox\installed_version.txt"
+Type: filesandordirs; Name: "{localappdata}\Blubox\studio\versions"
+Type: files; Name: "{localappdata}\Blubox\installed_studio_version.txt"
+Type: files; Name: "{localappdata}\BluboxStudio\session.json"
 
 [Code]
 function GetAcceptanceTimestamp(Param: string): string;
 begin
   Result := GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':');
-end;
-
-procedure InstallChild(const FileName, ProductName: string);
-var
-  ResultCode: Integer;
-  InstallerPath: string;
-begin
-  InstallerPath := ExpandConstant('{tmp}') + '\' + FileName;
-  if not Exec(InstallerPath,
-    '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-', '', SW_HIDE,
-    ewWaitUntilTerminated, ResultCode) then
-    RaiseException('Could not start the ' + ProductName + ' installer.');
-  if ResultCode <> 0 then
-    RaiseException(ProductName + ' installation failed (exit code ' + IntToStr(ResultCode) + ').');
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then begin
-    InstallChild('Blubox-Client-Setup-{#ClientVersion}.exe', 'Blubox Client');
-    InstallChild('Blubox-Studio-Setup-{#StudioVersion}.exe', 'Blubox Studio');
-  end;
 end;
 #else
 [Code]

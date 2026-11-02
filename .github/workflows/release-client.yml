@@ -81,6 +81,74 @@ jobs:
             fi
           done
 
+      - name: Test combined installer install and uninstall
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $stage = 'studio-source/dist/release_staging'
+          $installer = "studio-source/dist/Blubox-Setup-$version.exe"
+          $installRoot = Join-Path $env:LOCALAPPDATA 'Programs\Blubox'
+          $legacyUninstallKeys = @(
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{5F1E3447-4F5B-43CE-8E96-FA67BE6F17A1}_is1',
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{855A8507-8E44-4A19-9DB7-B33A43C01D44}_is1'
+          )
+          foreach ($key in $legacyUninstallKeys) {
+            New-Item -Path $key -Force | Out-Null
+            New-ItemProperty -Path $key -Name 'UninstallString' -Value 'legacy test entry' -PropertyType String -Force | Out-Null
+          }
+          foreach ($path in @("$installRoot/Client/unins000.exe", "$installRoot/Client/unins000.dat", "$installRoot/Studio/unins000.exe", "$installRoot/Studio/unins000.dat")) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+            Set-Content -LiteralPath $path -Value 'legacy test uninstaller'
+          }
+          $process = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Combined installer failed with exit code $($process.ExitCode)." }
+
+          foreach ($key in $legacyUninstallKeys) {
+            if (Test-Path -LiteralPath $key) { throw "Installer left an obsolete child uninstaller registered: $key." }
+          }
+          foreach ($path in @("$installRoot/Client/unins000.exe", "$installRoot/Client/unins000.dat", "$installRoot/Studio/unins000.exe", "$installRoot/Studio/unins000.dat")) {
+            if (Test-Path -LiteralPath $path) { throw "Installer left an obsolete child uninstaller behind: $path." }
+          }
+
+          $installedFiles = @(
+            @{ Staged = "$stage/BluboxClient.exe"; Installed = "$installRoot/Client/BluboxClient.exe" },
+            @{ Staged = "$stage/BluboxClient-LICENSE.txt"; Installed = "$installRoot/Client/LICENSE.txt" },
+            @{ Staged = "$stage/BluboxStudio.exe"; Installed = "$installRoot/Studio/BluboxStudio.exe" },
+            @{ Staged = "$stage/BluboxStudio-LICENSE.txt"; Installed = "$installRoot/Studio/LICENSE.txt" },
+            @{ Staged = "$stage/assets/editor/luau_api_catalog.json"; Installed = "$installRoot/Studio/assets/editor/luau_api_catalog.json" },
+            @{ Staged = "$stage/assets/editor/fonts/InterVariable.ttf"; Installed = "$installRoot/Studio/assets/editor/fonts/InterVariable.ttf" },
+            @{ Staged = "$stage/assets/editor/fonts/JetBrainsMonoRegular.ttf"; Installed = "$installRoot/Studio/assets/editor/fonts/JetBrainsMonoRegular.ttf" }
+          )
+          foreach ($file in $installedFiles) {
+            if (-not (Test-Path -LiteralPath $file.Installed -PathType Leaf)) { throw "Installer did not install $($file.Installed)." }
+            $stagedHash = (Get-FileHash -LiteralPath $file.Staged -Algorithm SHA256).Hash
+            $installedHash = (Get-FileHash -LiteralPath $file.Installed -Algorithm SHA256).Hash
+            if ($stagedHash -ne $installedHash) { throw "Installed file does not match staged file: $($file.Installed)." }
+          }
+
+          foreach ($key in @('HKCU:\Software\Classes\blubox', 'HKCU:\Software\Classes\blubox-studio')) {
+            if (-not (Test-Path -LiteralPath $key)) { throw "Installer did not register protocol: $key." }
+          }
+          foreach ($key in @('HKCU:\Software\Blubox\Legal\Client', 'HKCU:\Software\Blubox\Legal\Studio')) {
+            if (-not (Test-Path -LiteralPath $key)) { throw "Installer did not record license acceptance: $key." }
+          }
+
+          $uninstaller = Join-Path $installRoot 'unins000.exe'
+          if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw 'Combined installer did not create its uninstaller.' }
+          $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Combined uninstaller failed with exit code $($process.ExitCode)." }
+          foreach ($path in @("$installRoot/Client/BluboxClient.exe", "$installRoot/Studio/BluboxStudio.exe")) {
+            if (Test-Path -LiteralPath $path) { throw "Uninstaller left an app executable behind: $path." }
+          }
+          foreach ($key in @('HKCU:\Software\Classes\blubox', 'HKCU:\Software\Classes\blubox-studio')) {
+            if (Test-Path -LiteralPath $key) { throw "Uninstaller left a protocol registered: $key." }
+          }
+          foreach ($key in @('HKCU:\Software\Blubox\Legal\Client', 'HKCU:\Software\Blubox\Legal\Studio')) {
+            $acceptance = Get-ItemProperty -LiteralPath $key -Name 'AcceptedEulaVersion' -ErrorAction SilentlyContinue
+            if ($null -ne $acceptance) { throw "Uninstaller left license records behind: $key." }
+          }
+          if (Test-Path -LiteralPath $installRoot) { throw "Uninstaller left the app installation directory behind: $installRoot." }
+
       - name: Show compiler cache statistics
         if: always()
         shell: msys2 {0}

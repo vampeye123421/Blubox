@@ -58,7 +58,7 @@ if (-not $SkipBuild) {
 
 $clientVersionFile = Join-Path $ClientRoot 'version.json'
 if (Test-Path -LiteralPath $clientVersionFile) {
-    $clientVersion = (Get-Content -LiteralPath $clientVersionFile -Raw | ConvertFrom-Json).version
+    $sourceClientVersion = (Get-Content -LiteralPath $clientVersionFile -Raw | ConvertFrom-Json).version
 } else {
     throw "Client version manifest not found: $clientVersionFile"
 }
@@ -67,7 +67,8 @@ if ($studioProject -notmatch 'project\(BluboxStudio VERSION ([0-9]+(?:\.[0-9]+){
     throw 'Could not determine the Studio version from CMakeLists.txt.'
 }
 $studioVersion = $Matches[1]
-if (-not $AppVersion) { $AppVersion = $clientVersion }
+if (-not $AppVersion) { $AppVersion = $sourceClientVersion }
+$clientVersion = $AppVersion
 foreach ($version in @($clientVersion, $studioVersion, $AppVersion)) {
     if ($version -notmatch '^\d+(\.\d+){1,3}$') { throw "Invalid release version: $version" }
 }
