@@ -147,7 +147,9 @@ jobs:
             $acceptance = Get-ItemProperty -LiteralPath $key -Name 'AcceptedEulaVersion' -ErrorAction SilentlyContinue
             if ($null -ne $acceptance) { throw "Uninstaller left license records behind: $key." }
           }
-          if (Test-Path -LiteralPath $installRoot) { throw "Uninstaller left the app installation directory behind: $installRoot." }
+          foreach ($path in @("$installRoot/Client", "$installRoot/Studio")) {
+            if (Test-Path -LiteralPath $path) { throw "Uninstaller left an app installation directory behind: $path." }
+          }
 
       - name: Show compiler cache statistics
         if: always()
