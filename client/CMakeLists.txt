@@ -39,6 +39,13 @@ if(WIN32)
     set(CURL_USE_SCHANNEL ON CACHE BOOL "Use Windows native TLS" FORCE)
 elseif(APPLE)
     set(CURL_USE_SECTRANSP ON CACHE BOOL "Use macOS native TLS" FORCE)
+    set(CURL_USE_PKGCONFIG OFF CACHE BOOL "Avoid Homebrew-only curl dependencies in universal builds" FORCE)
+    set(CURL_DISABLE_LDAP ON CACHE BOOL "Disable unused LDAP protocols" FORCE)
+    set(USE_APPLE_IDN ON CACHE BOOL "Use system IDN support" FORCE)
+    set(USE_LIBIDN2 OFF CACHE BOOL "Avoid a non-system IDN dependency" FORCE)
+    set(USE_NGHTTP2 OFF CACHE BOOL "Avoid a non-system HTTP/2 dependency" FORCE)
+    set(CURL_USE_LIBPSL OFF CACHE BOOL "Avoid a non-system public suffix dependency" FORCE)
+    set(CURL_USE_LIBSSH2 OFF CACHE BOOL "Avoid unused SSH dependencies" FORCE)
 endif()
 
 FetchContent_Declare(
