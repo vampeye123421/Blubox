@@ -56,6 +56,18 @@ jobs:
           cmake --build build --target blubox_launcher --parallel 2
           cmake --build build --target blubox_studio_launcher --parallel 2
 
+      - name: Verify Windows executables have no third-party DLL imports
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          for executable in build/blubox_client.exe build/blubox_launcher.exe build/blubox_studio_launcher.exe; do
+            if objdump -p "$executable" | grep -Eiq 'DLL Name: (lib.*\.dll|zlib.*\.dll)$'; then
+              echo "Unexpected third-party DLL import in $executable" >&2
+              objdump -p "$executable" | grep -Ei 'DLL Name: (lib.*\.dll|zlib.*\.dll)$' >&2
+              exit 1
+            fi
+          done
+
       - name: Show compiler cache statistics
         if: always()
         shell: msys2 {0}
