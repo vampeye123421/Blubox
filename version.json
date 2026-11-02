@@ -16,5 +16,26 @@
   "studioLauncherSha256": "9594c2683d2aa353925fab33bf4f3845da9d75dbc5fa68ae57905bb854efb395",
   "studioLauncherVersion": "0.2.46",
   "setupDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.46/Blubox-Setup.exe",
-  "setupSha256": "c54c5c005ad8871e5ab5c7dc26b5ac85d49e358ad464eac98d3d6de8268782b7"
+  "setupSha256": "c54c5c005ad8871e5ab5c7dc26b5ac85d49e358ad464eac98d3d6de8268782b7",
+  "platforms": {
+    "macos": {
+      "archiveDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.46/Blubox-macOS-universal.zip",
+      "archiveSha256": "076b16ec9bdec0412f1afdc62060b4b5dd8c760ff757cf1db2c8a25d2fbbf19b",
+      "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.46/BluboxClient-macOS-universal",
+      "sha256": "292b3cb24253d603895996c97d4fb7a96032d773f6d1e557ec70805e1b1d447c",
+      "launcherVersion": "0.2.46",
+      "launcherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.46/BluboxLauncher-macOS-universal",
+      "launcherSha256": "16a9bebd9e1942e3d7952fc8324b71ea4ab9193ad070e9af3e49309ff3aa559e",
+      "studioVersion": "0.1.14",
+      "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.46/BluboxStudio-macOS-universal",
+      "studioSha256": "3dae0be920c292cdbe4773884c1f0d8def1adb4cd2709f9f1f00377c8c71f7db",
+      "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.46/InterVariable.ttf",
+      "studioFontSha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf",
+      "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.46/JetBrainsMonoRegular.ttf",
+      "studioCodeFontSha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
+      "studioLauncherVersion": "0.2.46",
+      "studioLauncherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.46/BluboxStudioLauncher-macOS-universal",
+      "studioLauncherSha256": "0f71dfa2a395595a3c503247813e17697a70e6ab2d756c0e281562ab680c1c41"
+    }
+  }
 }
