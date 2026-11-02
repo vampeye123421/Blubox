@@ -264,6 +264,13 @@ jobs:
           cmake --build build --parallel 3 --target blubox_client blubox_launcher blubox_studio_launcher
           cmake --build studio-build --parallel 3 --target blubox_studio
 
+      - name: Ad-hoc sign macOS app bundles
+        run: |
+          codesign --force --deep --sign - "build/Blubox Client.app"
+          codesign --force --deep --sign - "studio-build/Blubox Studio.app"
+          codesign --verify --deep --strict --verbose=2 "build/Blubox Client.app"
+          codesign --verify --deep --strict --verbose=2 "studio-build/Blubox Studio.app"
+
       - name: Show compiler cache statistics
         if: always()
         run: ccache --show-stats
