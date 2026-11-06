@@ -21,8 +21,8 @@
 
 namespace {
 
-constexpr int kWindowWidth = 1920;
-constexpr int kWindowHeight = 1080;
+constexpr int kWindowWidth = 1152;
+constexpr int kWindowHeight = 648;
 constexpr float kMouseSensitivity = 0.003f;
 constexpr float kMinimumCameraPitch = -0.15f;
 constexpr float kMaximumCameraPitch = 0.85f;
@@ -731,6 +731,10 @@ int GameClient::Run() {
 }
 
 void GameClient::Update(float deltaSeconds) {
+    const bool altEnterPressed =
+        (IsKeyDown(KEY_LEFT_ALT) || IsKeyDown(KEY_RIGHT_ALT)) && IsKeyPressed(KEY_ENTER);
+    if (IsKeyPressed(KEY_F11) || altEnterPressed) ToggleFullscreen();
+
     if (networkClient_.HasDisconnectNotice()) {
         // Keep the actual Raylib/GLFW cursor mode in sync with the gameplay
         // flag. A stale disabled-cursor mode reports the pointer at the center
@@ -804,9 +808,6 @@ void GameClient::Update(float deltaSeconds) {
             mouseCaptured_ = false;
             EnableCursor();
         }
-    }
-    if (IsKeyPressed(KEY_F11)) {
-        ToggleFullscreen();
     }
     if (IsKeyPressed(KEY_TAB)) {
         mouseCaptured_ = !mouseCaptured_;
