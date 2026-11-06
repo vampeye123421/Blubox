@@ -144,6 +144,29 @@ void AppendUtf8(std::string &text, int codepoint) {
     }
 }
 
+std::size_t PreviousUtf8Boundary(std::string_view text, std::size_t index) {
+    if (index == 0) return 0;
+    --index;
+    while (index > 0 &&
+           (static_cast<unsigned char>(text[index]) & 0xC0) == 0x80) {
+        --index;
+    }
+    return index;
+}
+
+std::size_t Utf8CodepointLength(unsigned char lead) {
+    return lead < 0x80 ? 1 :
+        (lead & 0xE0) == 0xC0 ? 2 :
+        (lead & 0xF0) == 0xE0 ? 3 :
+        (lead & 0xF8) == 0xF0 ? 4 : 1;
+}
+
+std::size_t NextUtf8Boundary(std::string_view text, std::size_t index) {
+    if (index >= text.size()) return text.size();
+    return std::min(text.size(), index +
+                    Utf8CodepointLength(static_cast<unsigned char>(text[index])));
+}
+
 std::string FitChatLine(const Font *font, std::string_view text, float maxWidth,
                         float fontSize, float spacing) {
     if (MeasureTextExSafe(font, std::string(text).c_str(), fontSize, spacing).x <= maxWidth)
@@ -833,7 +856,8 @@ void GameClient::Update(float deltaSeconds) {
 
     if (shiftLockEnabled_ || mouseCaptured_) {
         const Vector2 mouseDelta = GetMouseDelta();
-        cameraYaw_ += mouseDelta.x * kMouseSensitivity;
+        cameraYaw_ = std::remainder(
+            cameraYaw_ + mouseDelta.x * kMouseSensitivity, 2.0f * PI);
         cameraPitch_ = std::clamp(cameraPitch_ + mouseDelta.y * kMouseSensitivity,
                                   kMinimumCameraPitch, kMaximumCameraPitch);
     }
@@ -875,32 +899,154 @@ void GameClient::UpdateChatInput() {
 
     if (IsKeyPressed(KEY_ESCAPE)) {
         chatInput_.clear();
+        chatCursor_ = 0;
+        chatSelectionAnchor_ = 0;
         CloseChatInput();
         return;
     }
-    if (IsKeyPressed(KEY_BACKSPACE) && !chatInput_.empty()) {
-        std::size_t start = chatInput_.size() - 1;
-        while (start > 0 &&
-               (static_cast<unsigned char>(chatInput_[start]) & 0xC0) == 0x80) {
-            --start;
+
+    const bool controlDown = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL) ||
+                             IsKeyDown(KEY_LEFT_SUPER) || IsKeyDown(KEY_RIGHT_SUPER);
+    const bool shiftDown = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+    const std::size_t selectionStart = std::min(chatCursor_, chatSelectionAnchor_);
+    const std::size_t selectionEnd = std::max(chatCursor_, chatSelectionAnchor_);
+    const auto eraseSelection = [this]() {
+        const std::size_t start = std::min(chatCursor_, chatSelectionAnchor_);
+        const std::size_t end = std::max(chatCursor_, chatSelectionAnchor_);
+        if (start == end) return false;
+        chatInput_.erase(start, end - start);
+        chatCursor_ = start;
+        chatSelectionAnchor_ = start;
+        return true;
+    };
+
+    if (controlDown && IsKeyPressed(KEY_A)) {
+        chatSelectionAnchor_ = 0;
+        chatCursor_ = chatInput_.size();
+    } else if (controlDown && (IsKeyPressed(KEY_C) || IsKeyPressed(KEY_X))) {
+        if (selectionStart != selectionEnd) {
+            const std::string selected = chatInput_.substr(
+                selectionStart, selectionEnd - selectionStart);
+            SetClipboardText(selected.c_str());
+            if (IsKeyDown(KEY_X)) eraseSelection();
         }
-        chatInput_.erase(start);
+    } else if (controlDown && IsKeyPressed(KEY_V)) {
+        const char *clipboard = GetClipboardText();
+        if (clipboard != nullptr) {
+            std::string pasted;
+            const std::string_view clipboardText(clipboard);
+            for (std::size_t index = 0; index < clipboardText.size();) {
+                const unsigned char lead = static_cast<unsigned char>(clipboardText[index]);
+                const std::size_t length = Utf8CodepointLength(lead);
+                bool validSequence = index + length <= clipboardText.size();
+                for (std::size_t offset = 1; validSequence && offset < length; ++offset) {
+                    validSequence =
+                        (static_cast<unsigned char>(clipboardText[index + offset]) & 0xC0) == 0x80;
+                }
+                if (!validSequence) {
+                    ++index;
+                    continue;
+                }
+                if (lead >= 0x20 && lead != 0x7F) {
+                    pasted.append(clipboardText.substr(index, length));
+                }
+                index += length;
+            }
+            const std::size_t start = selectionStart;
+            std::string candidate = chatInput_;
+            candidate.erase(start, selectionEnd - selectionStart);
+            const std::size_t available = kMaxChatMessageBytes - candidate.size();
+            if (pasted.size() > available) {
+                pasted.resize(available);
+                while (!pasted.empty() &&
+                       (static_cast<unsigned char>(pasted.back()) & 0xC0) == 0x80) {
+                    pasted.pop_back();
+                }
+                if (!pasted.empty()) {
+                    const std::size_t lastCodepoint = PreviousUtf8Boundary(
+                        pasted, pasted.size());
+                    const std::size_t lastLength =
+                        pasted.size() - lastCodepoint;
+                    const std::size_t expectedLength = Utf8CodepointLength(
+                        static_cast<unsigned char>(pasted[lastCodepoint]));
+                    if (lastLength < expectedLength) pasted.resize(lastCodepoint);
+                }
+            }
+            candidate.insert(start, pasted);
+            chatInput_ = std::move(candidate);
+            chatCursor_ = start + pasted.size();
+            chatSelectionAnchor_ = chatCursor_;
+        }
+    } else {
+        const bool leftPressed = IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT);
+        const bool rightPressed = IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT);
+        if (leftPressed || rightPressed) {
+            std::size_t next = chatCursor_;
+            if (!shiftDown && selectionStart != selectionEnd) {
+                next = leftPressed ? selectionStart : selectionEnd;
+            } else if (leftPressed) {
+                next = PreviousUtf8Boundary(chatInput_, chatCursor_);
+            } else {
+                next = NextUtf8Boundary(chatInput_, chatCursor_);
+            }
+            if (!shiftDown) chatSelectionAnchor_ = next;
+            chatCursor_ = next;
+        }
+        if (IsKeyPressed(KEY_HOME)) {
+            chatCursor_ = 0;
+            if (!shiftDown) chatSelectionAnchor_ = chatCursor_;
+        }
+        if (IsKeyPressed(KEY_END)) {
+            chatCursor_ = chatInput_.size();
+            if (!shiftDown) chatSelectionAnchor_ = chatCursor_;
+        }
+
+        const bool backspacePressed =
+            IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE);
+        const bool deletePressed =
+            IsKeyPressed(KEY_DELETE) || IsKeyPressedRepeat(KEY_DELETE);
+        if (backspacePressed || deletePressed) {
+            const bool erasedSelection = eraseSelection();
+            if (!erasedSelection && backspacePressed && chatCursor_ > 0) {
+                const std::size_t start = PreviousUtf8Boundary(chatInput_, chatCursor_);
+                chatInput_.erase(start, chatCursor_ - start);
+                chatCursor_ = start;
+                chatSelectionAnchor_ = start;
+            } else if (!erasedSelection && deletePressed &&
+                       chatCursor_ < chatInput_.size()) {
+                chatInput_.erase(chatCursor_,
+                                 NextUtf8Boundary(chatInput_, chatCursor_) - chatCursor_);
+                chatSelectionAnchor_ = chatCursor_;
+            }
+        }
     }
 
     int codepoint = 0;
     while ((codepoint = GetCharPressed()) > 0) {
         if (codepoint < 0x20 || codepoint == 0x7F ||
-            (codepoint >= 0xD800 && codepoint <= 0xDFFF) || codepoint > 0x10FFFF) {
+            (codepoint >= 0xD800 && codepoint <= 0xDFFF) || codepoint > 0x10FFFF ||
+            controlDown) {
             continue;
         }
         std::string candidate = chatInput_;
-        AppendUtf8(candidate, codepoint);
-        if (candidate.size() <= kMaxChatMessageBytes) chatInput_ = std::move(candidate);
+        const std::size_t start = std::min(chatCursor_, chatSelectionAnchor_);
+        const std::size_t end = std::max(chatCursor_, chatSelectionAnchor_);
+        candidate.erase(start, end - start);
+        std::string inserted;
+        AppendUtf8(inserted, codepoint);
+        if (candidate.size() + inserted.size() <= kMaxChatMessageBytes) {
+            candidate.insert(start, inserted);
+            chatInput_ = std::move(candidate);
+            chatCursor_ = start + inserted.size();
+            chatSelectionAnchor_ = chatCursor_;
+        }
     }
 
     if (IsKeyPressed(KEY_ENTER)) {
         if (!chatInput_.empty() && networkClient_.SendChatMessage(chatInput_)) {
             chatInput_.clear();
+            chatCursor_ = 0;
+            chatSelectionAnchor_ = 0;
         }
         CloseChatInput();
     }
@@ -910,6 +1056,8 @@ void GameClient::OpenChatInput() {
     shiftLockTapPending_ = false;
     chatPanelVisible_ = true;
     chatInputActive_ = true;
+    chatCursor_ = chatInput_.size();
+    chatSelectionAnchor_ = chatCursor_;
     chatReturnToShiftLock_ = shiftLockEnabled_;
     chatReturnMouseCaptured_ = mouseCaptured_;
     shiftLockEnabled_ = false;
@@ -1383,16 +1531,66 @@ void GameClient::DrawChatOverlay(const Font *font) {
         chatInputActive_ ? Color{20, 29, 39, 255} : Color{17, 24, 33, 240});
     DrawRectangleRoundedLines(input, 0.12f, 6,
         chatInputActive_ ? Color{106, 177, 210, 255} : Color{65, 78, 91, 220});
-    const std::string inputLine = chatInputActive_
-        ? "> " + chatInput_ + "_"
-        : !chatInput_.empty() ? "Draft: " + chatInput_
-        : networkClient_.SessionId() != 0 ? "Press / to chat"
-                                          : "Join a server to chat";
+    constexpr float inputFontSize = 16.0f;
+    constexpr float inputSpacing = 0.3f;
+    const float maxInputTextWidth = input.width - 24.0f;
+    std::string inputLine;
+    std::string visiblePrefix;
+    float caretOffset = 0.0f;
+    std::size_t visibleStart = 0;
+    if (chatInputActive_) {
+        const float maxPrefixWidth = maxInputTextWidth * 0.65f;
+        while (visibleStart < chatCursor_) {
+            const std::string prefix = "> " + chatInput_.substr(visibleStart, chatCursor_ - visibleStart);
+            if (MeasureTextExSafe(font, prefix.c_str(), inputFontSize, inputSpacing).x <=
+                maxPrefixWidth) break;
+            visibleStart = NextUtf8Boundary(chatInput_, visibleStart);
+        }
+        visiblePrefix = "> ";
+        if (visibleStart > 0) visiblePrefix += "...";
+        visiblePrefix += chatInput_.substr(visibleStart, chatCursor_ - visibleStart);
+        inputLine = visiblePrefix + chatInput_.substr(chatCursor_);
+        caretOffset = MeasureTextExSafe(
+            font, visiblePrefix.c_str(), inputFontSize, inputSpacing).x;
+    } else {
+        inputLine = !chatInput_.empty() ? "Draft: " + chatInput_
+            : networkClient_.SessionId() != 0 ? "Press / to chat"
+                                              : "Join a server to chat";
+    }
     const std::string fittedInput = FitChatLine(
-        font, inputLine, input.width - 24.0f, 16.0f, 0.3f);
+        font, inputLine, maxInputTextWidth, inputFontSize, inputSpacing);
+    BeginScissorMode(static_cast<int>(input.x + 8.0f),
+                     static_cast<int>(input.y + 4.0f),
+                     static_cast<int>(input.width - 16.0f),
+                     static_cast<int>(input.height - 8.0f));
+    if (chatInputActive_ && chatCursor_ != chatSelectionAnchor_) {
+        const std::size_t start = std::min(chatCursor_, chatSelectionAnchor_);
+        const std::size_t end = std::max(chatCursor_, chatSelectionAnchor_);
+        const std::size_t visibleSelectionStart = std::max(start, visibleStart);
+        const std::size_t visibleSelectionEnd = std::max(visibleSelectionStart, end);
+        const std::string before = visiblePrefix.substr(
+            0, visiblePrefix.size() - (chatCursor_ - visibleStart)) +
+            chatInput_.substr(visibleStart, visibleSelectionStart - visibleStart);
+        const std::string selected = chatInput_.substr(
+            visibleSelectionStart, visibleSelectionEnd - visibleSelectionStart);
+        const float selectionX = input.x + 12.0f +
+            MeasureTextExSafe(font, before.c_str(), inputFontSize, inputSpacing).x;
+        const float selectionWidth =
+            MeasureTextExSafe(font, selected.c_str(), inputFontSize, inputSpacing).x;
+        if (selectionWidth > 0.0f) {
+            DrawRectangle(static_cast<int>(selectionX), static_cast<int>(input.y + 9.0f),
+                          static_cast<int>(selectionWidth), 22, Color{51, 104, 142, 230});
+        }
+    }
     DrawTextExSafe(font, fittedInput.c_str(),
                    Vector2{input.x + 12.0f, input.y + 10.0f},
-                   16.0f, 0.3f,
+                   inputFontSize, inputSpacing,
                    chatInputActive_ ? Color{129, 214, 255, 255}
                                     : Color{156, 176, 199, 220});
+    if (chatInputActive_) {
+        DrawRectangle(static_cast<int>(input.x + 12.0f + caretOffset),
+                      static_cast<int>(input.y + 11.0f), 2, 18,
+                      Color{225, 242, 255, 255});
+    }
+    EndScissorMode();
 }

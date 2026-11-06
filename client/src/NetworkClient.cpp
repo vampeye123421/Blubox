@@ -504,6 +504,7 @@ void NetworkClient::HandlePacket(const unsigned char *data, std::size_t size) {
 void NetworkClient::SendPlayerPosition(float x, float y, float z, float yaw) {
     if (peer_ == nullptr || host_ == nullptr || !authenticated_ ||
         !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(yaw)) return;
+    yaw = std::remainder(yaw, 2.0f * PI);
     const double now = GetTime();
     if (now < nextPositionSendTime_) return;
     nextPositionSendTime_ = now + 0.05; // 20 Hz client input; server snapshots remain 60 Hz.

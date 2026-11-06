@@ -11,6 +11,7 @@
 
 #include <raylib.h>
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -51,6 +52,8 @@ private:
     Font uiFont_{};
     std::unordered_map<std::string, Texture2D> nameplateTextures_;
     std::string chatInput_;
+    std::size_t chatCursor_ = 0;
+    std::size_t chatSelectionAnchor_ = 0;
     std::unordered_map<std::uint64_t, std::size_t> playerColorSlots_;
     std::unordered_map<std::uint64_t, JPH::BodyID> remotePlayerBodies_;
     struct SmoothedPlayer {

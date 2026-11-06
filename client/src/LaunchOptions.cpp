@@ -83,4 +83,5 @@ void PrintUsage(const char *executableName) {
     std::printf("Guest mode starts the local test scene without connecting to a server.\n");
     std::printf("On Windows, use --register-protocol to register blubox:// for the current user.\n");
     std::printf("Controls: WASD to move, mouse to look, / to open chat, Enter to send, TAB to capture/release the mouse, ESC to release the mouse, F11 or Alt+Enter to toggle fullscreen/windowed mode.\n");
+    std::printf("Chat editing: hold Backspace/Delete to erase, use arrow keys and Shift+arrows to select, Ctrl+A/C/X/V to select/copy/cut/paste (Cmd on macOS).\n");
 }
