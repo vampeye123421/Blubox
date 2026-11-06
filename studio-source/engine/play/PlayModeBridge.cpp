@@ -61,32 +61,58 @@ std::wstring utf8Wide(std::string_view value) {
 std::filesystem::path clientExecutable() {
 #ifdef _WIN32
   wchar_t overridePath[32768]{}; const DWORD length=GetEnvironmentVariableW(L"BLUBOX_CLIENT_EXE",overridePath,32768);
-  if(length>0 && length<32768 && std::filesystem::exists(overridePath)) return overridePath;
+  if(length>0 && length<32768) {
+    const std::filesystem::path candidate(overridePath);
+    std::error_code ec;
+    if(std::filesystem::is_regular_file(candidate,ec)) return candidate;
+    throw std::runtime_error("BLUBOX_CLIENT_EXE does not point to an existing client executable.");
+  }
   // A client shipped beside Studio is the version paired with this editor.
   // Prefer it over an unrelated developer checkout so Studio playtests do
   // not silently launch a stale client with incompatible gameplay behavior.
   wchar_t module[32768]{}; const DWORD moduleLength=GetModuleFileNameW(nullptr,module,32768);
   if(moduleLength>0 && moduleLength<32768) {
-    const auto beside=std::filesystem::path(module).parent_path()/L"blubox_client.exe";
-    if(std::filesystem::exists(beside)) return beside;
+    const auto directory=std::filesystem::path(module).parent_path();
+    for(const wchar_t* name : {L"BluboxClient.exe",L"blubox_client.exe"}) {
+      const auto beside=directory/name;
+      std::error_code ec;
+      if(std::filesystem::is_regular_file(beside,ec)) return beside;
+    }
   }
-  // Prefer the developer build when it exists so the in-process Studio
-  // server can use the --studio-playtest protocol without requiring a
-  // published client update first.
-  const std::filesystem::path dev=L"D:\\blubox-client\\build\\blubox_client.exe";
-  if(std::filesystem::exists(dev)) return dev;
   wchar_t local[32768]{}; const DWORD localLength=GetEnvironmentVariableW(L"LOCALAPPDATA",local,32768);
   if(localLength>0 && localLength<32768) {
-    const auto versions=std::filesystem::path(local)/L"Blubox"/L"versions";
-    std::vector<std::filesystem::path> candidates;
+    const auto localAppData=std::filesystem::path(local);
+    const auto installed=localAppData/L"Programs"/L"Blubox"/L"Client"/L"BluboxClient.exe";
     std::error_code ec;
+    if(std::filesystem::is_regular_file(installed,ec)) return installed;
+    const auto installRoot=localAppData/L"Blubox"/L"Client";
+    std::ifstream installedVersionFile(installRoot/L"installed_version.txt");
+    std::string installedVersion;
+    if(installedVersionFile) {
+      std::getline(installedVersionFile,installedVersion);
+      const auto pinned=installRoot/L"versions"/installedVersion/L"blubox_client.exe";
+      ec.clear();
+      if(std::filesystem::is_regular_file(pinned,ec)) return pinned;
+    }
+    const auto versions=installRoot/L"versions";
+    std::vector<std::filesystem::path> candidates;
+    ec.clear();
     if(std::filesystem::exists(versions,ec)) for(const auto& entry:std::filesystem::directory_iterator(versions,ec)) {
       auto candidate=entry.path()/L"blubox_client.exe";
-      if(entry.is_directory(ec) && std::filesystem::exists(candidate,ec)) candidates.push_back(candidate);
+      ec.clear();
+      if(entry.is_directory(ec)) {
+        ec.clear();
+        if(std::filesystem::is_regular_file(candidate,ec)) candidates.push_back(candidate);
+      }
     }
     std::sort(candidates.begin(),candidates.end(),std::greater<>());
     if(!candidates.empty()) return candidates.front();
   }
+  // Keep the developer build as a last resort; installed release clients
+  // must be preferred on machines that also happen to have a dev checkout.
+  const std::filesystem::path dev=L"D:\\blubox-client\\build\\blubox_client.exe";
+  std::error_code ec;
+  if(std::filesystem::is_regular_file(dev,ec)) return dev;
   return {};
 #else
   const char* overridePath = std::getenv("BLUBOX_CLIENT_EXE");
@@ -121,14 +147,20 @@ std::filesystem::path clientExecutable() {
 }
 bool launchClient(const std::filesystem::path& executable, std::uint16_t port,
                   std::string_view credential, const std::filesystem::path& mapFile,
-                  std::string_view displayName, void*& processHandle) {
-  if(executable.empty() || !std::filesystem::exists(executable)) return false;
+                  std::string_view displayName, void*& processHandle, std::string& error) {
+  if(executable.empty()) {
+    error="Blubox Client was not found. Install it with the Blubox setup, or set BLUBOX_CLIENT_EXE to its executable path.";
+    return false;
+  }
 #ifdef _WIN32
   std::wstring command=quoteArg(executable.wstring())+L" --studio-playtest \"127.0.0.1\" "+std::to_wstring(port)+L" "+
     utf8Wide(credential)+L" "+quoteArg(mapFile.wstring())+L" "+quoteArg(utf8Wide(displayName));
   STARTUPINFOW startup{}; startup.cb=sizeof(startup); PROCESS_INFORMATION process{};
   if(!CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_UNICODE_ENVIRONMENT,
-                     nullptr,executable.parent_path().c_str(),&startup,&process)) return false;
+                     nullptr,executable.parent_path().c_str(),&startup,&process)) {
+    error="Windows could not start Blubox Client (error "+std::to_string(GetLastError())+").";
+    return false;
+  }
   CloseHandle(process.hThread); processHandle=process.hProcess; return true;
 #else
   std::vector<std::string> arguments{
@@ -139,14 +171,20 @@ bool launchClient(const std::filesystem::path& executable, std::uint16_t port,
   for (auto& argument : arguments) argumentPointers.push_back(argument.data());
   argumentPointers.push_back(nullptr);
   posix_spawn_file_actions_t actions;
-  if (posix_spawn_file_actions_init(&actions) != 0) return false;
+  if (posix_spawn_file_actions_init(&actions) != 0) {
+    error="Could not initialize the Blubox Client launch.";
+    return false;
+  }
   const int chdirResult = posix_spawn_file_actions_addchdir_np(&actions, executable.parent_path().c_str());
   pid_t process = 0;
   const int result = chdirResult == 0
       ? posix_spawn(&process, executable.c_str(), &actions, nullptr, argumentPointers.data(), environ)
       : chdirResult;
   posix_spawn_file_actions_destroy(&actions);
-  if (result != 0) return false;
+  if (result != 0) {
+    error="Could not start Blubox Client (error "+std::to_string(result)+").";
+    return false;
+  }
   processHandle = reinterpret_cast<void*>(static_cast<intptr_t>(process + 1));
   return true;
 #endif
@@ -187,8 +225,9 @@ bool PlayModeBridge::start(const PlayConfig& config, PlayError& error) {
         std::ofstream output(mapFile,std::ios::binary|std::ios::trunc);
         const auto json=playWorld.ToJson().dump(); output.write(json.data(),static_cast<std::streamsize>(json.size())); output.close();
         if(!output) throw std::runtime_error("Could not write the temporary playtest map.");
-        if(!launchClient(clientExecutable(),server_->port(),credential,mapFile,config_.playerDisplayName,standaloneProcess_))
-          throw std::runtime_error("Could not launch the standalone Blubox client. Set BLUBOX_CLIENT_EXE to its executable path.");
+        std::string launchError;
+        if(!launchClient(clientExecutable(),server_->port(),credential,mapFile,config_.playerDisplayName,standaloneProcess_,launchError))
+          throw std::runtime_error(launchError);
       } catch(const std::exception& exception) {
         error.message=exception.what();
         server_->shutdown(); server_.reset();

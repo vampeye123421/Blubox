@@ -8,6 +8,7 @@ Local Play is implemented as a serialized handoff from the editor document into 
 - `ServerRuntime` and `ClientRuntime` each reconstruct their own `MapDocument`, `SceneRuntime`, `InstanceRegistry`, Luau VM, and `RemoteManager`.
 - The client runtime document is used as the Play viewport source. Runtime edits do not write into the editor document.
 - Server simulation and ENet polling run on a `std::jthread`; the local client is polled and rendered on Studio's UI thread.
+- Play and Play Here use Studio's in-process client runtime, so local testing does not depend on a separately installed client executable.
 - ENet binds the server to `127.0.0.1:0`, reads the OS-assigned port, and authenticates the client with a one-session random credential through Hello/Welcome.
 
 ## Script policy

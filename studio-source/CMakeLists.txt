@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(BluboxStudio VERSION 0.1.14 LANGUAGES C CXX)
+project(BluboxStudio VERSION 0.1.15 LANGUAGES C CXX)
 if(WIN32)
   enable_language(RC)
 elseif(APPLE)
@@ -111,6 +111,10 @@ FetchContent_Declare(cgltf
   GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
   GIT_TAG v1.15
   GIT_SHALLOW TRUE)
+FetchContent_Declare(ufbx
+  GIT_REPOSITORY https://github.com/ufbx/ufbx.git
+  GIT_TAG v0.23.1
+  GIT_SHALLOW TRUE)
 FetchContent_Declare(curl
   URL https://curl.se/download/curl-8.10.1.tar.gz
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
@@ -124,7 +128,15 @@ FetchContent_GetProperties(cgltf)
 if(NOT cgltf_POPULATED)
   FetchContent_Populate(cgltf)
 endif()
+FetchContent_GetProperties(ufbx)
+if(NOT ufbx_POPULATED)
+  FetchContent_Populate(ufbx)
+endif()
 target_include_directories(enet PUBLIC "${enet_SOURCE_DIR}/include")
+
+add_library(ufbx STATIC "${ufbx_SOURCE_DIR}/ufbx.c")
+target_include_directories(ufbx PUBLIC "${ufbx_SOURCE_DIR}")
+set_target_properties(ufbx PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
 
 add_library(blubox_platform_http STATIC ../shared/HttpClient.cpp)
 target_include_directories(blubox_platform_http PUBLIC ../shared)
@@ -214,6 +226,7 @@ target_sources(blubox_studio PRIVATE
   engine/assets/TextureCache.cpp
   engine/assets/ObjImporter.cpp
   engine/assets/GltfImporter.cpp
+  engine/assets/FbxImporter.cpp
   engine/assets/MeshCache.cpp
   engine/render/RaylibMaterialAdapter.cpp
   engine/render/RaylibMeshAdapter.cpp
@@ -253,6 +266,7 @@ target_link_libraries(blubox_studio PRIVATE
   Luau.VM
   Jolt
   enet
+  ufbx
   nlohmann_json::nlohmann_json)
 if(APPLE)
   target_link_libraries(blubox_studio PRIVATE blubox_platform_native)

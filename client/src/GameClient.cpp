@@ -35,7 +35,7 @@ constexpr float kChatButtonY = 18.0f;
 constexpr float kChatButtonWidth = 100.0f;
 constexpr float kChatButtonHeight = 44.0f;
 constexpr float kChatPanelWidth = 440.0f;
-constexpr float kChatPanelHeight = 330.0f;
+constexpr float kChatPanelHeight = 390.0f;
 constexpr float kChatPanelGap = 10.0f;
 // Keep direct light on the player's camera-facing side so character shading is
 // visible from the normal third-person view. The artwork sun remains in front
@@ -187,6 +187,61 @@ std::string FitChatLine(const Font *font, std::string_view text, float maxWidth,
     }
     if (lastFit == 0) return "...";
     return std::string(text.substr(0, lastFit)) + "...";
+}
+
+std::vector<std::string> WrapChatText(const Font *font, std::string_view text,
+                                      float maxWidth, float fontSize, float spacing) {
+    std::vector<std::string> lines;
+    std::string line;
+    std::string word;
+    const auto widthOf = [font, fontSize, spacing](const std::string &value) {
+        return MeasureTextExSafe(font, value.c_str(), fontSize, spacing).x;
+    };
+    const auto appendWord = [&]() {
+        if (word.empty()) return;
+        const std::string candidate = line.empty() ? word : line + " " + word;
+        if (widthOf(candidate) <= maxWidth) {
+            line = candidate;
+            word.clear();
+            return;
+        }
+        if (!line.empty()) {
+            lines.push_back(std::move(line));
+            line.clear();
+        }
+        if (widthOf(word) <= maxWidth) {
+            line = std::move(word);
+            word.clear();
+            return;
+        }
+        for (std::size_t start = 0; start < word.size();) {
+            const std::size_t end = NextUtf8Boundary(word, start);
+            const std::string codepoint = word.substr(start, end - start);
+            const std::string fragment = line + codepoint;
+            if (!line.empty() && widthOf(fragment) > maxWidth) {
+                lines.push_back(std::move(line));
+                line.clear();
+            }
+            line += codepoint;
+            start = end;
+        }
+        word.clear();
+    };
+
+    for (std::size_t index = 0; index < text.size();) {
+        const std::size_t end = NextUtf8Boundary(text, index);
+        const std::string_view codepoint = text.substr(index, end - index);
+        if (codepoint == " " || codepoint == "\t" || codepoint == "\r" ||
+            codepoint == "\n") {
+            appendWord();
+        } else {
+            word.append(codepoint);
+        }
+        index = end;
+    }
+    appendWord();
+    if (!line.empty() || lines.empty()) lines.push_back(std::move(line));
+    return lines;
 }
 
 Rectangle ChatButtonBounds() {
@@ -1465,8 +1520,55 @@ void GameClient::DrawChatOverlay(const Font *font) {
     constexpr float messageSpacing = 0.3f;
     constexpr float messageLineHeight = 25.0f;
     constexpr std::size_t visibleMessages = 8;
+    struct ChatMessageLayout {
+        bool senderVerified;
+        std::string fittedName;
+        float textX;
+        std::vector<std::string> lines;
+    };
+    const float messageStartY = panel.y + 52.0f;
+    const float messageAreaBottom = panel.y + panel.height - 82.0f;
+    const auto maxVisibleLines = static_cast<std::size_t>(std::max(
+        1.0f, std::floor((messageAreaBottom - messageStartY) / messageLineHeight)));
+    std::vector<ChatMessageLayout> visibleLayouts;
+    std::size_t visibleLineCount = 0;
     const std::size_t firstMessage = messages.size() > visibleMessages
         ? messages.size() - visibleMessages : 0;
+    for (std::size_t index = messages.size(); index > firstMessage; --index) {
+        const ChatMessageSnapshot &message = messages[index - 1];
+        bool senderVerified = false;
+        if (message.senderSessionId == networkClient_.SessionId()) {
+            senderVerified = networkClient_.UserVerified();
+        } else {
+            const auto sender = std::find_if(
+                networkClient_.Players().begin(), networkClient_.Players().end(),
+                [&message](const NetworkPlayerSnapshot &player) {
+                    return player.sessionId == message.senderSessionId;
+                });
+            senderVerified = sender != networkClient_.Players().end() && sender->isVerified;
+        }
+
+        const float nameX = panel.x + 16.0f;
+        const float maxNameWidth = std::min(150.0f, panel.width * 0.36f);
+        std::string fittedName = FitChatLine(
+            font, message.displayName, maxNameWidth, messageFontSize, messageSpacing);
+        float textX = nameX +
+            MeasureTextExSafe(font, fittedName.c_str(), messageFontSize, messageSpacing).x + 4.0f;
+        if (senderVerified && verifiedBadgeTexture_.id != 0) textX += 18.0f;
+        textX += MeasureTextExSafe(font, ": ", messageFontSize, messageSpacing).x;
+        auto lines = WrapChatText(
+            font, message.text,
+            std::max(24.0f, panel.x + panel.width - 14.0f - textX),
+            messageFontSize, messageSpacing);
+        if (visibleLineCount + lines.size() > maxVisibleLines) {
+            if (!visibleLayouts.empty()) break;
+            lines.resize(maxVisibleLines);
+        }
+        visibleLineCount += lines.size();
+        visibleLayouts.push_back({
+            senderVerified, std::move(fittedName), textX, std::move(lines)});
+    }
+    std::reverse(visibleLayouts.begin(), visibleLayouts.end());
     float lineY = panel.y + 52.0f;
     if (firstMessage == messages.size()) {
         const char *emptyText = networkClient_.SessionId() != 0
@@ -1475,29 +1577,13 @@ void GameClient::DrawChatOverlay(const Font *font) {
         DrawTextExSafe(font, emptyText, Vector2{panel.x + 16.0f, lineY}, 14.0f, 0.3f,
                        Color{162, 174, 185, 255});
     } else {
-        for (std::size_t index = firstMessage; index < messages.size(); ++index) {
-            const ChatMessageSnapshot &message = messages[index];
-            bool senderVerified = false;
-            if (message.senderSessionId == networkClient_.SessionId()) {
-                senderVerified = networkClient_.UserVerified();
-            } else {
-                const auto sender = std::find_if(
-                    networkClient_.Players().begin(), networkClient_.Players().end(),
-                    [&message](const NetworkPlayerSnapshot &player) {
-                        return player.sessionId == message.senderSessionId;
-                    });
-                senderVerified = sender != networkClient_.Players().end() && sender->isVerified;
-            }
-
+        for (const ChatMessageLayout &layout : visibleLayouts) {
             const float nameX = panel.x + 16.0f;
-            const float maxNameWidth = std::min(150.0f, panel.width * 0.36f);
-            const std::string fittedName = FitChatLine(
-                font, message.displayName, maxNameWidth, messageFontSize, messageSpacing);
-            DrawTextExSafe(font, fittedName.c_str(), Vector2{nameX, lineY},
+            DrawTextExSafe(font, layout.fittedName.c_str(), Vector2{nameX, lineY},
                            messageFontSize, messageSpacing, Color{231, 238, 248, 240});
             float textX = nameX +
-                MeasureTextExSafe(font, fittedName.c_str(), messageFontSize, messageSpacing).x + 4.0f;
-            if (senderVerified && verifiedBadgeTexture_.id != 0) {
+                MeasureTextExSafe(font, layout.fittedName.c_str(), messageFontSize, messageSpacing).x + 4.0f;
+            if (layout.senderVerified && verifiedBadgeTexture_.id != 0) {
                 constexpr float badgeSize = 14.0f;
                 const Rectangle source{0.0f, 0.0f,
                     static_cast<float>(verifiedBadgeTexture_.width),
@@ -1507,17 +1593,15 @@ void GameClient::DrawChatOverlay(const Font *font) {
                                Vector2{0.0f, 0.0f}, 0.0f, WHITE);
                 textX += badgeSize + 4.0f;
             }
-            const Vector2 colonSize = MeasureTextExSafe(font, ": ", messageFontSize,
-                                                        messageSpacing);
             DrawTextExSafe(font, ": ", Vector2{textX, lineY}, messageFontSize,
                            messageSpacing, Color{231, 238, 248, 240});
-            textX += colonSize.x;
-            const std::string fittedText = FitChatLine(
-                font, message.text, std::max(24.0f, panel.x + panel.width - 14.0f - textX),
-                messageFontSize, messageSpacing);
-            DrawTextExSafe(font, fittedText.c_str(), Vector2{textX, lineY},
-                           messageFontSize, messageSpacing, Color{231, 238, 248, 240});
-            lineY += messageLineHeight;
+            for (std::size_t lineIndex = 0; lineIndex < layout.lines.size(); ++lineIndex) {
+                const float lineX = lineIndex == 0 ? layout.textX : nameX;
+                DrawTextExSafe(font, layout.lines[lineIndex].c_str(),
+                               Vector2{lineX, lineY}, messageFontSize, messageSpacing,
+                               Color{231, 238, 248, 240});
+                lineY += messageLineHeight;
+            }
         }
     }
 

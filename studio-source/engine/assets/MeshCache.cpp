@@ -1,5 +1,6 @@
 #include "MeshCache.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <fstream>
 #include <mutex>
@@ -41,9 +42,19 @@ template<class T> bool Read(std::istream& in, T& value) {
 MeshAssetId MeshCache::insert(ImportedMesh mesh) {
     if (mesh.vertices.empty() || mesh.indices.empty() || mesh.indices.size() % 3 != 0) return 0;
     for (std::uint32_t index : mesh.indices) if (index >= mesh.vertices.size()) return 0;
+    Vec3 minimum = mesh.vertices.front().position;
+    Vec3 maximum = minimum;
+    for (const auto& vertex : mesh.vertices) {
+        minimum.x = std::min(minimum.x, vertex.position.x);
+        minimum.y = std::min(minimum.y, vertex.position.y);
+        minimum.z = std::min(minimum.z, vertex.position.z);
+        maximum.x = std::max(maximum.x, vertex.position.x);
+        maximum.y = std::max(maximum.y, vertex.position.y);
+        maximum.z = std::max(maximum.z, vertex.position.z);
+    }
     const MeshAssetId id = HashMesh(mesh);
     std::unique_lock lock(mutex_);
-    auto [it, inserted] = entries_.try_emplace(id, std::make_shared<Entry>(Entry{std::move(mesh), 1}));
+    auto [it, inserted] = entries_.try_emplace(id, std::make_shared<Entry>(Entry{std::move(mesh), minimum, maximum, 1}));
     if (!inserted) ++it->second->references;
     return id;
 }
@@ -68,6 +79,15 @@ std::shared_ptr<const ImportedMesh> MeshCache::get(MeshAssetId id) const {
     std::shared_lock lock(mutex_);
     auto found = entries_.find(id);
     return found == entries_.end() ? nullptr : std::shared_ptr<const ImportedMesh>(found->second, &found->second->mesh);
+}
+
+bool MeshCache::bounds(MeshAssetId id, Vec3& minimum, Vec3& maximum) const {
+    std::shared_lock lock(mutex_);
+    auto found = entries_.find(id);
+    if (found == entries_.end()) return false;
+    minimum = found->second->minimum;
+    maximum = found->second->maximum;
+    return true;
 }
 
 std::uint32_t MeshCache::referenceCount(MeshAssetId id) const {

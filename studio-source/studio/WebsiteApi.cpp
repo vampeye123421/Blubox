@@ -95,31 +95,6 @@ WebsiteApi::WebsiteApi() {
         ? configured : "https://blubox.runs-on.dev";
 }
 
-bool WebsiteApi::PublishMap(const MapDocument& document, std::string_view accessToken,
-                            std::string& error) const {
-    try {
-        const HttpResult result = Request(baseUrl_, "POST", "api/studio/maps",
-                                          accessToken, document.ToJson().dump());
-        if (result.status < 200 || result.status >= 300) {
-            if (result.status == 404) {
-                throw std::runtime_error("Studio API route is missing (HTTP 404). Redeploy the Blubox website mailer service to enable Studio publishing.");
-            }
-            std::string detail;
-            try {
-                const auto payload = nlohmann::json::parse(result.body);
-                if (payload.contains("error") && payload.at("error").is_string()) detail = payload.at("error").get<std::string>();
-            } catch (...) {}
-            throw std::runtime_error("Map save was rejected by the website (HTTP " +
-                                     std::to_string(result.status) + ")." + (detail.empty() ? std::string{} : " " + detail));
-        }
-        error.clear();
-        return true;
-    } catch (const std::exception& exception) {
-        error = exception.what();
-        return false;
-    }
-}
-
 bool WebsiteApi::PublishGame(MapDocument& document, std::string_view title,
                              std::string_view description, std::string_view accessToken,
                              std::string& resultMessage, std::string& error,
@@ -205,26 +180,6 @@ bool WebsiteApi::ListOwnedGames(std::string_view accessToken,
         return true;
     } catch (const std::exception& exception) {
         games.clear();
-        error = exception.what();
-        return false;
-    }
-}
-
-bool WebsiteApi::DownloadMap(std::string_view worldId, std::string_view accessToken,
-                             MapDocument& document, std::string& error) const {
-    try {
-        if (!IsSafeWorldId(worldId)) throw std::runtime_error("Invalid Blubox world id.");
-        const std::string route = "api/studio/maps/" + std::string(worldId);
-        const HttpResult result = Request(baseUrl_, "GET", route, accessToken, {});
-        if (result.status < 200 || result.status >= 300) {
-            throw std::runtime_error("Map download was rejected by the website (HTTP " +
-                                     std::to_string(result.status) + ").");
-        }
-        const nlohmann::json payload = nlohmann::json::parse(result.body);
-        document = MapDocument::FromJson(payload.contains("map") ? payload.at("map") : payload);
-        error.clear();
-        return true;
-    } catch (const std::exception& exception) {
         error = exception.what();
         return false;
     }

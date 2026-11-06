@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
-#include <iterator>
+#include <limits>
 #include <numeric>
 #include <unordered_map>
 
@@ -20,10 +20,16 @@ bool ReadLimited(const std::filesystem::path& path, std::size_t maxBytes, std::s
     }
     const auto size = std::filesystem::file_size(path, ec);
     if (ec || size == 0) { error = {ImportErrorCode::InvalidFile, "Import file is empty or unreadable."}; return false; }
-    if (size > maxBytes) { error = {ImportErrorCode::FileTooLarge, "Import file exceeds the configured size limit."}; return false; }
+    if (size > maxBytes || size > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max())) {
+        error = {ImportErrorCode::FileTooLarge, "Import file exceeds the configured size limit."}; return false;
+    }
     std::ifstream stream(path, std::ios::binary);
-    contents.assign(std::istreambuf_iterator<char>(stream), {});
-    if (!stream.eof() || contents.size() != size) { error = {ImportErrorCode::FileUnavailable, "Could not read the complete import file."}; return false; }
+    if (!stream) { error = {ImportErrorCode::FileUnavailable, "Could not open the import file."}; return false; }
+    contents.resize(static_cast<std::size_t>(size));
+    stream.read(contents.data(), static_cast<std::streamsize>(size));
+    if (stream.bad() || stream.gcount() != static_cast<std::streamsize>(size)) {
+        error = {ImportErrorCode::FileUnavailable, "Could not read the complete import file."}; return false;
+    }
     return true;
 }
 

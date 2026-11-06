@@ -28,6 +28,7 @@
 #include "../engine/assets/MeshCache.hpp"
 #include "../engine/assets/ObjImporter.hpp"
 #include "../engine/assets/GltfImporter.hpp"
+#include "../engine/assets/FbxImporter.hpp"
 #include "../engine/assets/ImportedModel.hpp"
 #include "../engine/render/RaylibMaterialAdapter.hpp"
 #include "../engine/render/RaylibMeshAdapter.hpp"
@@ -343,7 +344,6 @@ struct StudioState {
     bool ownedGamesLoaded = false;
     std::string selectedUpdateWorldId;
     std::vector<blubox::studio::OwnedPublishedGame> ownedGames;
-    std::string cloudWorldId;
     std::string websiteToken;
     std::string displayName;
     std::string authError;
@@ -373,7 +373,6 @@ struct StudioState {
     bool showProperties = true;
     bool showViewport = true;
     bool showOutput = true;
-    bool showCloudPanel = false;
     bool showWorldPanel = false;
     bool pendingNewMap = false;
     bool pendingOpenMap = false;
@@ -560,12 +559,12 @@ std::optional<std::filesystem::path> ChooseModelPath() {
     dialog.lStructSize = sizeof(dialog);
     dialog.lpstrFile = path.data();
     dialog.nMaxFile = static_cast<DWORD>(path.size());
-    dialog.lpstrFilter = L"3D models (*.obj;*.gltf;*.glb)\0*.obj;*.gltf;*.glb\0OBJ (*.obj)\0*.obj\0glTF / GLB (*.gltf;*.glb)\0*.gltf;*.glb\0\0";
+    dialog.lpstrFilter = L"3D models (*.obj;*.gltf;*.glb;*.fbx)\0*.obj;*.gltf;*.glb;*.fbx\0OBJ (*.obj)\0*.obj\0glTF / GLB (*.gltf;*.glb)\0*.gltf;*.glb\0FBX (*.fbx)\0*.fbx\0\0";
     dialog.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     return GetOpenFileNameW(&dialog) ? std::optional<std::filesystem::path>(path.data()) : std::nullopt;
 #elif defined(__APPLE__)
     return blubox::platform::ShowNativeFileDialog(
-        false, "Import 3D Model", {".obj", ".gltf", ".glb"});
+        false, "Import 3D Model", {".obj", ".gltf", ".glb", ".fbx"});
 #else
     return std::nullopt;
 #endif
@@ -600,13 +599,21 @@ void QueueModelImport(StudioState& state) {
     auto* textures = state.textureCache.get();
     state.modelImportTask = std::async(std::launch::async, [path, textures] {
         ModelImportResult result;
-        const auto extension = path.extension().string();
-        if (extension == ".obj" || extension == ".OBJ") {
+        std::string extension = path.extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (extension == ".obj") {
             blubox::engine::assets::ObjImporter importer(textures);
             result.succeeded = importer.import(path, result.model, result.error);
-        } else {
+        } else if (extension == ".fbx") {
+            blubox::engine::assets::FbxImporter importer;
+            result.succeeded = importer.import(path, result.model, result.error);
+        } else if (extension == ".gltf" || extension == ".glb") {
             blubox::engine::assets::GltfImporter importer(textures);
             result.succeeded = importer.import(path, result.model, result.error);
+        } else {
+            result.error = {blubox::engine::assets::ImportErrorCode::UnsupportedFormat,
+                            "Supported model formats are .obj, .gltf, .glb, and .fbx."};
         }
         return result;
     });
@@ -1115,30 +1122,6 @@ bool SaveMap(StudioState& state, bool choosePath) {
         for (const auto& entity : state.map.entities) if (IsScriptObject(entity)) state.scriptSavedSource[entity.id] = entity.luauScript;
         state.dirtyScriptIds.clear();
     };
-    if (!choosePath && state.authenticated && !state.websiteToken.empty()) {
-        const bool containsLocalAssets = std::any_of(state.map.entities.begin(), state.map.entities.end(), [](const Entity& entity) {
-            return entity.kind == "meshpart" || entity.kind == "decal" || entity.properties.value("albedoMap", std::uint64_t{0}) != 0 ||
-                   entity.properties.value("normalMap", std::uint64_t{0}) != 0 ||
-                   entity.properties.value("roughnessMap", std::uint64_t{0}) != 0 ||
-                   entity.properties.value("metalnessMap", std::uint64_t{0}) != 0 ||
-                   entity.properties.value("emissiveMap", std::uint64_t{0}) != 0;
-        });
-        if (containsLocalAssets) {
-            SetStatus(state, "This map contains local mesh or texture assets. Save a local .blubox copy so its .assets folder is included.", true);
-            return false;
-        }
-        std::string error;
-        if (!state.api.PublishMap(state.map, state.websiteToken, error)) {
-            SetStatus(state, "Cloud save failed: " + error, true);
-            return false;
-        }
-        state.cloudWorldId = state.map.worldId;
-        state.dirty = false;
-        markScriptSourcesSaved();
-        SetStatus(state, "Saved to Blubox Cloud.");
-        return true;
-    }
-
     std::filesystem::path path = state.currentFilePath;
     if (choosePath || path.empty()) {
         auto selected = ChooseMapPath(true);
@@ -1182,7 +1165,6 @@ void OpenMap(StudioState& state) {
         state.dirtyScriptIds.clear();
         for (const auto& entity : state.map.entities) if (entity.kind == "script" || entity.kind == "localscript") state.scriptSavedSource[entity.id] = entity.luauScript;
         state.currentFilePath = *selected;
-        state.cloudWorldId = state.map.worldId;
         state.selectedEntity = -1;
         state.selectedService.clear();
         state.dirty = false;
@@ -1200,7 +1182,6 @@ void NewMap(StudioState& state) {
         state.openScriptIds.clear();
         state.scriptEditors.clear();
         state.currentFilePath.clear();
-        state.cloudWorldId.clear();
         state.selectedEntity = -1;
         state.selectedService.clear();
         state.dirty = false;
@@ -1391,10 +1372,12 @@ void StartBrowserLogin(StudioState& state) {
 }
 
 void Logout(StudioState& state) {
-    if (state.projectOpen) {
-        std::string error;
-        if (!state.api.PublishMap(state.map, state.websiteToken, error)) {
-            SetStatus(state, "Logout paused: safety save failed. " + error, true);
+    if (state.projectOpen && (state.dirty || !state.dirtyScriptIds.empty())) {
+        const std::string previousStatus = state.status;
+        if (!SaveMap(state, false)) {
+            if (state.status == previousStatus) {
+                SetStatus(state, "Logout paused because the project was not saved locally.", true);
+            }
             return;
         }
     }
@@ -1409,7 +1392,6 @@ void Logout(StudioState& state) {
     state.scriptEditors.clear();
     state.selectedEntity = -1;
     state.selectedService.clear();
-    state.cloudWorldId.clear();
     state.projectOpen = false;
     state.authenticated = false;
     state.validatingSession = false;
@@ -1448,12 +1430,123 @@ void EnsureViewport(StudioState& state) {
     SetTextureFilter(state.viewport.texture, TEXTURE_FILTER_BILINEAR);
 }
 
+bool EntityLocalBounds(const StudioState& state, const Entity& entity, Vector3& minimum, Vector3& maximum) {
+    if (entity.kind == "meshpart") {
+        const auto assetId = entity.properties.value("meshAssetId", std::uint64_t{0});
+        blubox::engine::Vec3 meshMinimum{}, meshMaximum{};
+        if (!assetId || !state.meshCache.bounds(assetId, meshMinimum, meshMaximum)) return false;
+        minimum = Vector3{meshMinimum.x, meshMinimum.y, meshMinimum.z};
+        maximum = Vector3{meshMaximum.x, meshMaximum.y, meshMaximum.z};
+        return true;
+    }
+    minimum = Vector3{-0.5f, -0.5f, -0.5f};
+    maximum = Vector3{0.5f, 0.5f, 0.5f};
+    return true;
+}
+
+bool WorldBounds(const StudioState& state, const MapDocument& world, const Entity& entity,
+                 Vector3& minimum, Vector3& maximum) {
+    Vector3 localMinimum{}, localMaximum{};
+    if (!EntityLocalBounds(state, entity, localMinimum, localMaximum)) return false;
+    const Matrix transform = WorldMatrix(world, entity);
+    minimum = Vector3{std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(),
+                      std::numeric_limits<float>::infinity()};
+    maximum = Vector3{-std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(),
+                      -std::numeric_limits<float>::infinity()};
+    for (int x = 0; x < 2; ++x) {
+        for (int y = 0; y < 2; ++y) {
+            for (int z = 0; z < 2; ++z) {
+                const Vector3 corner = Vector3Transform(Vector3{
+                    x ? localMaximum.x : localMinimum.x,
+                    y ? localMaximum.y : localMinimum.y,
+                    z ? localMaximum.z : localMinimum.z}, transform);
+                minimum.x = std::min(minimum.x, corner.x);
+                minimum.y = std::min(minimum.y, corner.y);
+                minimum.z = std::min(minimum.z, corner.z);
+                maximum.x = std::max(maximum.x, corner.x);
+                maximum.y = std::max(maximum.y, corner.y);
+                maximum.z = std::max(maximum.z, corner.z);
+            }
+        }
+    }
+    return true;
+}
+
+bool IsWorldRenderable(const Entity& entity) {
+    return entity.kind == "meshpart" || entity.kind == "block" || entity.kind == "sphere" ||
+           entity.kind == "spawnlocation" || entity.kind == "wedgepart" || entity.kind == "cornerwedgepart";
+}
+
+std::string ModelShadowGroup(const MapDocument& world, const Entity& entity) {
+    const Entity* current = &entity;
+    for (std::size_t depth = 0; current && depth <= world.entities.size(); ++depth) {
+        if (current->kind == "model" && current->parent == "Workspace") return current->id;
+        if (current->parent == "Workspace") return {};
+        const auto parent = std::find_if(world.entities.begin(), world.entities.end(),
+            [&](const Entity& candidate) { return candidate.id == current->parent; });
+        if (parent == world.entities.end()) return {};
+        current = &*parent;
+    }
+    return {};
+}
+
+void DrawShadowBounds(Vector3 minimum, Vector3 maximum) {
+    const float width = maximum.x - minimum.x;
+    const float depth = maximum.z - minimum.z;
+    const float elevation = std::max(0.0f, minimum.y);
+    const float radius = std::clamp(std::max(width, depth) * 0.42f + elevation * 0.06f, 0.18f, 30.0f);
+    const float centerX = (minimum.x + maximum.x) * 0.5f + elevation * 0.035f;
+    const float centerZ = (minimum.z + maximum.z) * 0.5f + elevation * 0.025f;
+    const auto alpha = static_cast<unsigned char>(std::clamp(52.0f - elevation * 2.5f, 12.0f, 52.0f));
+    DrawCylinder(Vector3{centerX, 0.002f, centerZ}, radius * 1.3f, radius * 1.3f,
+                 0.002f, 32, Color{0, 0, 0, static_cast<unsigned char>(alpha / 2)});
+    DrawCylinder(Vector3{centerX, 0.005f, centerZ}, radius, radius,
+                 0.003f, 32, Color{0, 0, 0, alpha});
+}
+
+void DrawPlayShadows(const StudioState& state, const MapDocument& world) {
+    struct GroupBounds {
+        Vector3 minimum{};
+        Vector3 maximum{};
+        bool initialized = false;
+    };
+    std::unordered_map<std::string, GroupBounds> groupedBounds;
+    for (const Entity& entity : world.entities) {
+        if (!entity.visible || !IsWorldRenderable(entity) || !IsWorkspaceDescendant(world, entity)) continue;
+        Vector3 minimum{}, maximum{};
+        if (!WorldBounds(state, world, entity, minimum, maximum)) continue;
+        const std::string groupId = ModelShadowGroup(world, entity);
+        if (groupId.empty()) {
+            DrawShadowBounds(minimum, maximum);
+            continue;
+        }
+        auto& group = groupedBounds[groupId];
+        if (!group.initialized) {
+            group.minimum = minimum;
+            group.maximum = maximum;
+            group.initialized = true;
+        } else {
+            group.minimum.x = std::min(group.minimum.x, minimum.x);
+            group.minimum.y = std::min(group.minimum.y, minimum.y);
+            group.minimum.z = std::min(group.minimum.z, minimum.z);
+            group.maximum.x = std::max(group.maximum.x, maximum.x);
+            group.maximum.y = std::max(group.maximum.y, maximum.y);
+            group.maximum.z = std::max(group.maximum.z, maximum.z);
+        }
+    }
+    for (const auto& entry : groupedBounds) {
+        const auto& bounds = entry.second;
+        if (bounds.initialized) DrawShadowBounds(bounds.minimum, bounds.maximum);
+    }
+}
+
 void DrawWorld(const StudioState& state, const MapDocument& world, bool simulationView = false,
                bool showEditorGrid = true) {
     BeginTextureMode(state.viewport);
     ClearBackground(Color{123, 177, 207, 255});
     BeginMode3D(state.camera);
     if (showEditorGrid) DrawGrid(48, 1.0f);
+    if (simulationView) DrawPlayShadows(state, world);
     for (std::size_t i = 0; i < world.entities.size(); ++i) {
         const Entity& entity = world.entities[i];
         if (!entity.visible) continue;
@@ -1468,6 +1561,8 @@ void DrawWorld(const StudioState& state, const MapDocument& world, bool simulati
 
             // Compose the complete instance chain from Workspace to the mesh.
             Material renderMaterial = material->second;
+            if (!simulationView && state.selectedEntity == static_cast<int>(i))
+                renderMaterial.maps[MATERIAL_MAP_ALBEDO].color = Color{255, 207, 92, 255};
             if (entity.properties.contains("transparency") && entity.properties["transparency"].is_number()) {
                 const float transparency = std::clamp(entity.properties["transparency"].get<float>(), 0.0f, 1.0f);
                 auto& diffuse = renderMaterial.maps[MATERIAL_MAP_ALBEDO].color;
@@ -1671,10 +1766,10 @@ void DrawTopBar(StudioState& state) {
         if (ImGui::MenuItem("Open...", "Ctrl+O")) state.pendingOpenMap = true;
         if (ImGui::MenuItem("Import 3D model...", nullptr, false, state.projectOpen && !state.modelImportTask.valid())) QueueModelImport(state);
         ImGui::Separator();
-        if (ImGui::MenuItem(state.authenticated ? "Save to Blubox" : "Save", "Ctrl+S")) SaveMap(state, false);
+        if (ImGui::MenuItem("Save", "Ctrl+S")) SaveMap(state, false);
         if (ImGui::MenuItem("Save a local copy...", "Ctrl+Shift+S")) SaveMap(state, true);
         ImGui::Separator();
-        if (ImGui::MenuItem("Publish to Website...")) {
+        if (ImGui::MenuItem("Publish game to Blubox...")) {
             state.publishTitle = state.map.name;
             state.publishDescription.clear();
             state.publishError.clear();
@@ -1693,7 +1788,6 @@ void DrawTopBar(StudioState& state) {
         ImGui::MenuItem("Output", nullptr, &state.showOutput);
         ImGui::Separator();
         ImGui::MenuItem("World settings", nullptr, &state.showWorldPanel);
-        ImGui::MenuItem("Cloud publishing", nullptr, &state.showCloudPanel);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Insert")) {
@@ -1710,7 +1804,7 @@ void DrawTopBar(StudioState& state) {
         if (ImGui::MenuItem("LocalScript", nullptr, false, state.projectOpen)) AddScriptForSelection(state, true);
         ImGui::EndMenu();
     }
-    if (ImGui::Button(state.authenticated ? "Save to Blubox" : "Save")) SaveMap(state, false);
+    if (ImGui::Button("Save local")) SaveMap(state, false);
     if (!state.playMode) state.playMode = std::make_unique<blubox::engine::play::PlayModeBridge>(state.map);
     using blubox::engine::play::PlayModeState;
     auto playState = state.playMode->state();
@@ -2197,6 +2291,11 @@ void HandleShortcuts(StudioState& state) {
 
 bool IsScriptObject(const Entity& entity) {
     return entity.kind == "script" || entity.kind == "localscript";
+}
+
+bool IsScriptEditorFocused(const StudioState& state) {
+    return std::any_of(state.scriptEditors.begin(), state.scriptEditors.end(),
+        [](const auto& entry) { return entry.second && entry.second->IsFocused(); });
 }
 
 void OpenScriptEditor(StudioState& state, const std::string& entityId) {
@@ -2736,7 +2835,7 @@ void DrawScriptPanel(StudioState& state) {
             ImGui::TextDisabled("Luau  ·  %d lines", editor->GetTotalLines());
             ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowWidth() - 120.0f));
             ImGui::TextDisabled("Ln %d, Col %d", cursor.mLine + 1, cursor.mColumn + 1);
-            ImGui::SameLine(); ImGui::TextDisabled("Ctrl+Wheel: %.0f%%", zoom * 100.0f);
+            ImGui::SameLine(); ImGui::TextDisabled("Ctrl+Z undo · Ctrl+Y redo · Ctrl+Wheel: %.0f%%", zoom * 100.0f);
         }
         ImGui::End();
         if (!open) {
@@ -2759,56 +2858,20 @@ Vector3 NormalizeVector(Vector3 value) {
     return Vector3{value.x / length, value.y / length, value.z / length};
 }
 
-Vector3 RotateVectorX(Vector3 value, float angle) {
-    const float c = std::cos(angle), s = std::sin(angle);
-    return Vector3{value.x, value.y * c - value.z * s, value.y * s + value.z * c};
-}
-
-Vector3 RotateVectorY(Vector3 value, float angle) {
-    const float c = std::cos(angle), s = std::sin(angle);
-    return Vector3{value.x * c + value.z * s, value.y, -value.x * s + value.z * c};
-}
-
-Vector3 RotateVectorZ(Vector3 value, float angle) {
-    const float c = std::cos(angle), s = std::sin(angle);
-    return Vector3{value.x * c - value.y * s, value.x * s + value.y * c, value.z};
-}
-
-bool IntersectEntity(const Entity& entity, Vector3 rayOrigin, Vector3 rayDirection, float& distance) {
-    const auto& transform = entity.transform;
-    Vector3 localOrigin{rayOrigin.x - transform.position[0], rayOrigin.y - transform.position[1], rayOrigin.z - transform.position[2]};
-    Vector3 localDirection = rayDirection;
-    localOrigin = RotateVectorX(localOrigin, -transform.rotation[0]);
-    localOrigin = RotateVectorY(localOrigin, -transform.rotation[1]);
-    localOrigin = RotateVectorZ(localOrigin, -transform.rotation[2]);
-    localDirection = RotateVectorX(localDirection, -transform.rotation[0]);
-    localDirection = RotateVectorY(localDirection, -transform.rotation[1]);
-    localDirection = RotateVectorZ(localDirection, -transform.rotation[2]);
-
-    if (entity.kind == "sphere") {
-        const float radius = transform.scale[0] * 0.5f;
-        const float b = localOrigin.x * localDirection.x + localOrigin.y * localDirection.y + localOrigin.z * localDirection.z;
-        const float c = localOrigin.x * localOrigin.x + localOrigin.y * localOrigin.y + localOrigin.z * localOrigin.z - radius * radius;
-        const float discriminant = b * b - c;
-        if (discriminant < 0.0f) return false;
-        const float nearHit = -b - std::sqrt(discriminant);
-        const float farHit = -b + std::sqrt(discriminant);
-        distance = nearHit >= 0.0f ? nearHit : farHit;
-        return distance >= 0.0f;
-    }
-
-    const float halfSize[3] = {transform.scale[0] * 0.5f, transform.scale[1] * 0.5f, transform.scale[2] * 0.5f};
-    const float origin[3] = {localOrigin.x, localOrigin.y, localOrigin.z};
-    const float direction[3] = {localDirection.x, localDirection.y, localDirection.z};
+bool RayIntersectsBounds(Vector3 origin, Vector3 direction, Vector3 minimum, Vector3 maximum, float& distance) {
+    const float origins[3] = {origin.x, origin.y, origin.z};
+    const float directions[3] = {direction.x, direction.y, direction.z};
+    const float minima[3] = {minimum.x, minimum.y, minimum.z};
+    const float maxima[3] = {maximum.x, maximum.y, maximum.z};
     float nearHit = 0.0f;
     float farHit = std::numeric_limits<float>::infinity();
     for (int axis = 0; axis < 3; ++axis) {
-        if (std::abs(direction[axis]) < 0.00001f) {
-            if (origin[axis] < -halfSize[axis] || origin[axis] > halfSize[axis]) return false;
+        if (std::abs(directions[axis]) < 0.00001f) {
+            if (origins[axis] < minima[axis] || origins[axis] > maxima[axis]) return false;
             continue;
         }
-        float first = (-halfSize[axis] - origin[axis]) / direction[axis];
-        float second = (halfSize[axis] - origin[axis]) / direction[axis];
+        float first = (minima[axis] - origins[axis]) / directions[axis];
+        float second = (maxima[axis] - origins[axis]) / directions[axis];
         if (first > second) std::swap(first, second);
         nearHit = std::max(nearHit, first);
         farHit = std::min(farHit, second);
@@ -2816,6 +2879,78 @@ bool IntersectEntity(const Entity& entity, Vector3 rayOrigin, Vector3 rayDirecti
     }
     distance = nearHit;
     return farHit >= 0.0f;
+}
+
+bool RayIntersectsTriangle(Vector3 origin, Vector3 direction, Vector3 a, Vector3 b, Vector3 c, float& distance) {
+    const Vector3 edge1 = Vector3Subtract(b, a);
+    const Vector3 edge2 = Vector3Subtract(c, a);
+    const Vector3 p = Vector3CrossProduct(direction, edge2);
+    const float determinant = Vector3DotProduct(edge1, p);
+    if (std::abs(determinant) < 0.000001f) return false;
+    const float inverseDeterminant = 1.0f / determinant;
+    const Vector3 offset = Vector3Subtract(origin, a);
+    const float u = Vector3DotProduct(offset, p) * inverseDeterminant;
+    if (u < 0.0f || u > 1.0f) return false;
+    const Vector3 q = Vector3CrossProduct(offset, edge1);
+    const float v = Vector3DotProduct(direction, q) * inverseDeterminant;
+    if (v < 0.0f || u + v > 1.0f) return false;
+    const float hit = Vector3DotProduct(edge2, q) * inverseDeterminant;
+    if (hit < 0.0f) return false;
+    distance = hit;
+    return true;
+}
+
+bool IntersectEntity(const StudioState& state, const MapDocument& world, const Entity& entity,
+                     Vector3 rayOrigin, Vector3 rayDirection, float& distance) {
+    const Matrix transform = WorldMatrix(world, entity);
+    if (std::abs(MatrixDeterminant(transform)) < 0.0000001f) return false;
+    const Matrix inverse = MatrixInvert(transform);
+    const Vector3 localOrigin = Vector3Transform(rayOrigin, inverse);
+    const Vector3 localDirection = Vector3Subtract(Vector3Transform(Vector3Add(rayOrigin, rayDirection), inverse), localOrigin);
+
+    if (entity.kind == "meshpart") {
+        const auto assetId = entity.properties.value("meshAssetId", std::uint64_t{0});
+        const auto mesh = state.meshCache.get(assetId);
+        blubox::engine::Vec3 meshMinimum{}, meshMaximum{};
+        if (!mesh || !state.meshCache.bounds(assetId, meshMinimum, meshMaximum)) return false;
+        const Vector3 minimum{meshMinimum.x, meshMinimum.y, meshMinimum.z};
+        const Vector3 maximum{meshMaximum.x, meshMaximum.y, meshMaximum.z};
+        float boundsDistance = 0.0f;
+        if (!RayIntersectsBounds(localOrigin, localDirection, minimum, maximum, boundsDistance)) return false;
+        float closest = std::numeric_limits<float>::infinity();
+        bool hit = false;
+        for (std::size_t index = 0; index + 2 < mesh->indices.size(); index += 3) {
+            const auto& a = mesh->vertices[mesh->indices[index]].position;
+            const auto& b = mesh->vertices[mesh->indices[index + 1]].position;
+            const auto& c = mesh->vertices[mesh->indices[index + 2]].position;
+            float triangleDistance = 0.0f;
+            if (RayIntersectsTriangle(localOrigin, localDirection,
+                    Vector3{a.x, a.y, a.z}, Vector3{b.x, b.y, b.z}, Vector3{c.x, c.y, c.z},
+                    triangleDistance) && triangleDistance < closest) {
+                closest = triangleDistance;
+                hit = true;
+            }
+        }
+        if (!hit) return false;
+        distance = closest;
+        return true;
+    }
+
+    if (entity.kind == "sphere") {
+        const float a = Vector3DotProduct(localDirection, localDirection);
+        const float b = Vector3DotProduct(localOrigin, localDirection);
+        const float c = Vector3DotProduct(localOrigin, localOrigin) - 0.25f;
+        const float discriminant = b * b - a * c;
+        if (a < 0.0000001f || discriminant < 0.0f) return false;
+        const float root = std::sqrt(discriminant);
+        const float nearHit = (-b - root) / a;
+        const float farHit = (-b + root) / a;
+        distance = nearHit >= 0.0f ? nearHit : farHit;
+        return distance >= 0.0f;
+    }
+
+    return RayIntersectsBounds(localOrigin, localDirection,
+                               Vector3{-0.5f, -0.5f, -0.5f}, Vector3{0.5f, 0.5f, 0.5f}, distance);
 }
 
 int PickEntity(const StudioState& state, float screenX, float screenY, float width, float height) {
@@ -2846,9 +2981,9 @@ int PickEntity(const StudioState& state, float screenX, float screenY, float wid
     float closest = std::numeric_limits<float>::infinity();
     for (std::size_t i = 0; i < state.map.entities.size(); ++i) {
         const Entity& entity = state.map.entities[i];
-        if (!entity.visible || (entity.kind != "block" && entity.kind != "sphere" && entity.kind != "spawnlocation") || entity.parent != "Workspace") continue;
+        if (!entity.visible || !IsWorldRenderable(entity) || !IsWorkspaceDescendant(state.map, entity)) continue;
         float hitDistance = 0.0f;
-        if (IntersectEntity(entity, state.camera.position, rayDirection, hitDistance) && hitDistance < closest) {
+        if (IntersectEntity(state, state.map, entity, state.camera.position, rayDirection, hitDistance) && hitDistance < closest) {
             closest = hitDistance;
             picked = static_cast<int>(i);
         }
@@ -3256,50 +3391,16 @@ void DrawViewport(StudioState& state) {
     ImGui::End();
 }
 
-void DrawCloudPanel(StudioState& state) {
-    if (!ImGui::Begin("Blubox Cloud", &state.showCloudPanel)) { ImGui::End(); return; }
-    ImGui::TextWrapped("Save your signed-in world to your Blubox account, or publish it for review. Use File > Save a local copy to keep a .blubox file on this PC.");
-    ImGui::TextDisabled("Website API: %s", state.api.baseUrl().c_str());
-    ImGui::Text("Account: %s", state.displayName.c_str());
-    ImGui::InputText("World ID", &state.cloudWorldId);
-    ImGui::TextDisabled("The website session is managed by Studio and never included in map data.");
-    if (ImGui::Button("Save map to website", ImVec2(-1, 0))) SaveMap(state, false);
-    if (ImGui::Button("Publish game...", ImVec2(-1, 0))) {
-        state.publishTitle = state.map.name;
-        state.publishDescription.clear();
-        state.publishError.clear();
-        state.showPublishDialog = true;
-    }
-    if (ImGui::Button("Load map from website", ImVec2(-1, 0))) {
-        MapDocument downloaded;
-        std::string error;
-        if (state.api.DownloadMap(state.cloudWorldId, state.websiteToken, downloaded, error)) {
-            state.map = std::move(downloaded);
-            state.openScriptIds.clear();
-            state.scriptEditors.clear();
-            state.cloudWorldId = state.map.worldId;
-            state.selectedEntity = -1;
-            state.selectedService.clear();
-            state.currentFilePath.clear();
-            state.dirty = false;
-            CreateScriptEngine(state);
-            SetStatus(state, "World loaded from the Blubox website.");
-        } else SetStatus(state, error, true);
-    }
-    ImGui::End();
-}
-
 void DrawWorldPanel(StudioState& state) {
     if (!ImGui::Begin("World", &state.showWorldPanel)) { ImGui::End(); return; }
     ImGui::TextDisabled("WORLD SETTINGS");
-    ImGui::TextWrapped("Build locally, then use File > Save to store a .blubox file. Publish to Website sends the map to your account.");
+    ImGui::TextWrapped("Build locally and save a .blubox project file on this PC. Use File > Publish game to Blubox when the game is ready.");
     ImGui::InputText("New world", &state.newMapName);
     if (ImGui::Button("Create world", ImVec2(-1, 0))) {
         try {
             state.map = MapDocument::Create(state.newMapName);
             state.openScriptIds.clear();
             state.scriptEditors.clear();
-            state.cloudWorldId.clear();
             state.selectedEntity = -1;
             state.selectedService.clear();
             state.currentFilePath.clear();
@@ -3546,13 +3647,6 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
         // Required once per ImGui frame: refresh ImGuizmo's hover/drag state before
         // any viewport calls to Manipulate().
         ImGuizmo::BeginFrame();
-        if (state.authenticated && state.projectOpen && state.inputRouter.routeEditorInput() &&
-            (!state.playMode || (state.playMode->state() != blubox::engine::play::PlayModeState::Running &&
-                                 state.playMode->state() != blubox::engine::play::PlayModeState::Paused)) &&
-            !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
-            (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))) {
-            DeleteSelectedEntity(state);
-        }
         if (!state.authenticated) {
             DrawLoginModal(state);
         } else if (state.projectOpen) {
@@ -3569,8 +3663,15 @@ int RunStudio(std::string startupToken, std::string startupLinkError) {
                 DrawScriptPanel(state);
                 if (state.showOutput) DrawOutput(state);
                 if (state.showWorldPanel) DrawWorldPanel(state);
-                if (state.showCloudPanel) DrawCloudPanel(state);
             } else DrawLoginModal(state);
+            if (state.authenticated && state.projectOpen && state.inputRouter.routeEditorInput() &&
+                (!state.playMode || (state.playMode->state() != blubox::engine::play::PlayModeState::Running &&
+                                     state.playMode->state() != blubox::engine::play::PlayModeState::Paused)) &&
+                !IsScriptEditorFocused(state) &&
+                !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
+                (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))) {
+                DeleteSelectedEntity(state);
+            }
             ImGui::End(); // workspace host
         }
         rlImGuiEnd();

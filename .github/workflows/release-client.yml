@@ -81,6 +81,23 @@ jobs:
             fi
           done
 
+      - name: Smoke-test launchers without the toolchain on PATH
+        shell: pwsh
+        run: |
+          $toolchainPath = $env:PATH
+          try {
+            $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+            foreach ($name in @('BluboxLauncher.exe', 'BluboxStudioLauncher.exe')) {
+              $launcher = Join-Path 'studio-source/dist/release_staging' $name
+              & $launcher --help
+              if ($LASTEXITCODE -ne 0) {
+                throw "$name failed to start without toolchain DLLs (exit code $LASTEXITCODE)."
+              }
+            }
+          } finally {
+            $env:PATH = $toolchainPath
+          }
+
       - name: Test combined installer install and uninstall
         shell: pwsh
         run: |
@@ -286,7 +303,7 @@ jobs:
     outputs:
       version: ${{ steps.package.outputs.version }}
       studio_version: ${{ steps.package.outputs.studio_version }}
-      archive_sha256: ${{ steps.checksums.outputs.archive }}
+      installer_sha256: ${{ steps.checksums.outputs.installer }}
       client_sha256: ${{ steps.checksums.outputs.client }}
       launcher_sha256: ${{ steps.checksums.outputs.launcher }}
       studio_sha256: ${{ steps.checksums.outputs.studio }}
@@ -376,7 +393,7 @@ jobs:
         if: always()
         run: ccache --show-stats
 
-      - name: Package combined app bundle
+      - name: Package macOS installer
         id: package
         shell: bash
         run: |
@@ -387,14 +404,21 @@ jobs:
             exit 1
           fi
           assets="$RUNNER_TEMP/macos-release-assets"
-          bundle_dir="$RUNNER_TEMP/Blubox for macOS"
+          package_root="$RUNNER_TEMP/blubox-macos-package-root"
           runtime_dir="$assets/runtime"
-          mkdir -p "$bundle_dir" "$runtime_dir"
-          ditto "build/Blubox Client.app" "$bundle_dir/Blubox Client.app"
-          ditto "studio-build/Blubox Studio.app" "$bundle_dir/Blubox Studio.app"
-          ditto -c -k --sequesterRsrc --keepParent "$bundle_dir" "$assets/Blubox-macOS-universal.zip"
-          unzip -Z1 "$assets/Blubox-macOS-universal.zip" | grep -Fx "Blubox for macOS/Blubox Client.app/Contents/Info.plist"
-          unzip -Z1 "$assets/Blubox-macOS-universal.zip" | grep -Fx "Blubox for macOS/Blubox Studio.app/Contents/Info.plist"
+          mkdir -p "$package_root" "$runtime_dir"
+          ditto "build/Blubox Client.app" "$package_root/Blubox Client.app"
+          ditto "studio-build/Blubox Studio.app" "$package_root/Blubox Studio.app"
+          pkgbuild \
+            --root "$package_root" \
+            --identifier com.blubox.desktop \
+            --version "$version" \
+            --install-location /Applications \
+            "$assets/Blubox-macOS-universal.pkg"
+          pkgutil --payload-files "$assets/Blubox-macOS-universal.pkg" \
+            > "$RUNNER_TEMP/blubox-macos-package-payload.txt"
+          grep -Fq "Blubox Client.app/Contents/Info.plist" "$RUNNER_TEMP/blubox-macos-package-payload.txt"
+          grep -Fq "Blubox Studio.app/Contents/Info.plist" "$RUNNER_TEMP/blubox-macos-package-payload.txt"
           cp "build/blubox_client" "$runtime_dir/BluboxClient-macOS-universal"
           cp "build/Blubox Client.app/Contents/MacOS/Blubox Client" "$runtime_dir/BluboxLauncher-macOS-universal"
           cp "studio-build/Blubox Studio.app/Contents/MacOS/Blubox Studio" "$runtime_dir/BluboxStudio-macOS-universal"
@@ -406,7 +430,7 @@ jobs:
         id: checksums
         shell: bash
         run: |
-          echo "archive=$(shasum -a 256 "$RUNNER_TEMP/macos-release-assets/Blubox-macOS-universal.zip" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "installer=$(shasum -a 256 "$RUNNER_TEMP/macos-release-assets/Blubox-macOS-universal.pkg" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           runtime="$RUNNER_TEMP/macos-release-assets/runtime"
           echo "client=$(shasum -a 256 "$runtime/BluboxClient-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           echo "launcher=$(shasum -a 256 "$runtime/BluboxLauncher-macOS-universal" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
@@ -430,14 +454,14 @@ jobs:
           name: macos-release-assets
           path: ${{ runner.temp }}/macos-release-assets
 
-      - name: Publish macOS app bundle and runtime payloads
+      - name: Publish macOS installer and runtime payloads
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           gh release upload "v$version" \
-            "$RUNNER_TEMP/macos-release-assets/Blubox-macOS-universal.zip" \
+            "$RUNNER_TEMP/macos-release-assets/Blubox-macOS-universal.pkg" \
             --repo "${{ github.repository }}" \
             --clobber
           gh release upload "runtime-v$version" \
@@ -451,7 +475,7 @@ jobs:
       - name: Publish macOS updater manifests
         uses: actions/github-script@v8
         env:
-          ARCHIVE_SHA256: ${{ needs.macos.outputs.archive_sha256 }}
+          INSTALLER_SHA256: ${{ needs.macos.outputs.installer_sha256 }}
           CLIENT_SHA256: ${{ needs.macos.outputs.client_sha256 }}
           CLIENT_LAUNCHER_SHA256: ${{ needs.macos.outputs.launcher_sha256 }}
           STUDIO_SHA256: ${{ needs.macos.outputs.studio_sha256 }}
@@ -469,8 +493,8 @@ jobs:
             const manifest = JSON.parse(Buffer.from(current.data.content, 'base64').toString('utf8'));
             manifest.platforms ??= {};
             manifest.platforms.macos = {
-              archiveDownloadUrl: `https://github.com/${owner}/${repo}/releases/download/v${version}/Blubox-macOS-universal.zip`,
-              archiveSha256: process.env.ARCHIVE_SHA256,
+              installerDownloadUrl: `https://github.com/${owner}/${repo}/releases/download/v${version}/Blubox-macOS-universal.pkg`,
+              installerSha256: process.env.INSTALLER_SHA256,
               downloadUrl: `https://github.com/${owner}/${repo}/releases/download/${runtimeTag}/BluboxClient-macOS-universal`,
               sha256: process.env.CLIENT_SHA256,
               launcherVersion: version,
