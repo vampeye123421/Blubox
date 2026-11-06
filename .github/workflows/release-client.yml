@@ -126,8 +126,23 @@ jobs:
             if ($stagedHash -ne $installedHash) { throw "Installed file does not match staged file: $($file.Installed)." }
           }
 
-          foreach ($key in @('HKCU:\Software\Classes\blubox', 'HKCU:\Software\Classes\blubox-studio')) {
-            if (-not (Test-Path -LiteralPath $key)) { throw "Installer did not register protocol: $key." }
+          $protocolRegistrations = @(
+            @{ Scheme = 'blubox'; Executable = "$installRoot\Client\BluboxClient.exe" },
+            @{ Scheme = 'blubox-studio'; Executable = "$installRoot\Studio\BluboxStudio.exe" }
+          )
+          foreach ($registration in $protocolRegistrations) {
+            $protocolKey = "HKCU:\Software\Classes\$($registration.Scheme)"
+            $protocol = Get-Item -LiteralPath $protocolKey -ErrorAction Stop
+            if ($protocol.GetValueNames() -notcontains 'URL Protocol' -or $protocol.GetValue('URL Protocol') -ne '') {
+              throw "Installer did not mark $($registration.Scheme) as a URL protocol."
+            }
+
+            $commandKey = Join-Path $protocolKey 'shell\open\command'
+            $command = (Get-Item -LiteralPath $commandKey -ErrorAction Stop).GetValue('')
+            $expectedCommand = '"{0}" "%1"' -f $registration.Executable
+            if ($command -ne $expectedCommand) {
+              throw "Installer registered an invalid command for $($registration.Scheme): $command."
+            }
           }
           foreach ($key in @('HKCU:\Software\Blubox\Legal\Client', 'HKCU:\Software\Blubox\Legal\Studio')) {
             if (-not (Test-Path -LiteralPath $key)) { throw "Installer did not record license acceptance: $key." }

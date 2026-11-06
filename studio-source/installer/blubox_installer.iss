@@ -72,6 +72,7 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
+ChangesAssociations=yes
 LicenseFile={#InstallerLicense}
 
 [Languages]
