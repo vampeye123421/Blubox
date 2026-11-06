@@ -19,23 +19,23 @@
   "setupSha256": "b51da5d2e092d35793d652e8425f75da40c1cca9dbf358a6544464214adf4d63",
   "platforms": {
     "macos": {
-      "archiveDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.50/Blubox-macOS-universal.zip",
-      "archiveSha256": "fd2423769d793d0c185ceb80c8247f0e8e36caa6e4edc59da0348f065b25f3c7",
-      "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.50/BluboxClient-macOS-universal",
-      "sha256": "c29799f5138e2ed9e2bb74fb45e9f0cb2791828fb5dd8c6978ea7528ff516d45",
-      "launcherVersion": "0.2.50",
-      "launcherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.50/BluboxLauncher-macOS-universal",
-      "launcherSha256": "16a9bebd9e1942e3d7952fc8324b71ea4ab9193ad070e9af3e49309ff3aa559e",
+      "archiveDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/v0.2.51/Blubox-macOS-universal.zip",
+      "archiveSha256": "c8ff85e8bd4bf89f70e67e94408ba333ad9512ad4d6f47005d84a42a07752bbf",
+      "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.51/BluboxClient-macOS-universal",
+      "sha256": "1ba356bd07d226fdba05f71c8a63ce60dd011669165fb762e9be37ad01385ad7",
+      "launcherVersion": "0.2.51",
+      "launcherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.51/BluboxLauncher-macOS-universal",
+      "launcherSha256": "fe805b4b4e1cdc40156f30582fa55b7ea086cbe9671f6978f187d3ae13054bad",
       "studioVersion": "0.1.14",
-      "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.50/BluboxStudio-macOS-universal",
-      "studioSha256": "96ea3ee2faf4c4918cb41b78d770e7217650393cad4fc74e241eb70fad9c4888",
-      "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.50/InterVariable.ttf",
+      "studioDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.51/BluboxStudio-macOS-universal",
+      "studioSha256": "7a0fcc952652c95b5e02c85621aea8f606e263fa5a0ea772072611ce0de4a434",
+      "studioFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.51/InterVariable.ttf",
       "studioFontSha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf",
-      "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.50/JetBrainsMonoRegular.ttf",
+      "studioCodeFontUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.51/JetBrainsMonoRegular.ttf",
       "studioCodeFontSha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f",
-      "studioLauncherVersion": "0.2.50",
-      "studioLauncherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.50/BluboxStudioLauncher-macOS-universal",
-      "studioLauncherSha256": "0f71dfa2a395595a3c503247813e17697a70e6ab2d756c0e281562ab680c1c41"
+      "studioLauncherVersion": "0.2.51",
+      "studioLauncherDownloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.51/BluboxStudioLauncher-macOS-universal",
+      "studioLauncherSha256": "c7e0ccd94bbbf5ea7b359b5aaa6c0c271e897cde90b9d56e649ff0b4cb1f6f3e"
     }
   }
 }
