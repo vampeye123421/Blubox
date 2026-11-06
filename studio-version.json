@@ -1,5 +1,11 @@
 {
   "version": "0.1.15",
   "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.53/BluboxStudio.exe",
-  "sha256": "67e006a4770b69ff9b35fc9f335d2f7586c8e6394ae7a4e64789662c9dcacecf"
+  "sha256": "67e006a4770b69ff9b35fc9f335d2f7586c8e6394ae7a4e64789662c9dcacecf",
+  "platforms": {
+    "macos": {
+      "downloadUrl": "https://github.com/vampeye123421/Blubox/releases/download/runtime-v0.2.53/BluboxStudio-macOS-universal",
+      "sha256": "847ef77bb2a01ca69b967f21e44e8d8326adeb8bc0e570b269838a0c3e4afbef"
+    }
+  }
 }
