@@ -88,10 +88,10 @@ jobs:
           try {
             $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
             foreach ($name in @('BluboxLauncher.exe', 'BluboxStudioLauncher.exe')) {
-              $launcher = Join-Path 'studio-source/dist/release_staging' $name
-              & $launcher --help
-              if ($LASTEXITCODE -ne 0) {
-                throw "$name failed to start without toolchain DLLs (exit code $LASTEXITCODE)."
+              $launcher = (Resolve-Path (Join-Path 'studio-source/dist/release_staging' $name)).Path
+              $process = Start-Process -FilePath $launcher -ArgumentList '--help' -Wait -PassThru
+              if ($process.ExitCode -ne 0) {
+                throw "$name failed to start without toolchain DLLs (exit code $($process.ExitCode))."
               }
             }
           } finally {
